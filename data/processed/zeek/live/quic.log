@@ -1,0 +1,20 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	quic
+#open	2026-08-31-20-13-12
+#fields	ts	uid	id.orig_h	id.orig_p	id.resp_h	id.resp_p	version	client_initial_dcid	client_scid	server_scid	server_name	client_protocol	history
+#types	time	string	addr	port	addr	port	string	string	string	string	string	string	string
+1788187389.348806	CbByuIrzvyO37yjj	192.168.1.109	41091	172.217.160.99	443	1	6020f25ed1c1ab3e	(empty)	e020f25ed1c1ab3e	www.gstatic.com	h3	IISiiiisIhhoHHOOOoooOoO
+1788187387.869104	CfShwE4uUE87CVpXjj	192.168.1.109	36249	172.217.160.99	443	1	060758102d881e7e	(empty)	e60758102d881e7e	www.gstatic.com	h3	IISiiiishhoIHHhHOOOoOoooO
+1788187379.382102	C3YFzD1ZWRerRzWJ0h	192.168.1.109	48971	142.251.151.119	443	1	a6956bd9233409dd	(empty)	e6956bd9233409dd	www.google.com	h3	IIISiiiiishooIIihoIiIihIiIiIiZhHHOHOhHHOoOoOOo
+1788187387.615193	CDj4Tr3lyTtTmFF89f	192.168.1.109	46434	192.178.193.94	443	1	a3cdca15855c0776	(empty)	e3cdca15855c0776	fonts.gstatic.com	h3	IIISiiiiishooIIihIiZZHhoHHOohHOoOHOO
+1788187379.513991	CUd3dG1x9N6RFaR0N7	192.168.1.109	43009	57.144.43.32	443	1	3e25424e03b079e3	(empty)	b3006ede17dbfe6e	web.whatsapp.com	h3	IISZishooIHhoOOOoOoO
+1788187379.756134	C0ettb4k3MDmwajDVi	192.168.1.109	59230	142.251.222.110	443	1	86ecbcdde9b053f9	(empty)	e6ecbcdde9b053f9	meet.google.com	h3	IIISZiiiiishooIHOOOooOOooOoO
+1788187387.279569	Chf16t4y3FrjBDopu8	192.168.1.109	33824	142.251.220.33	443	1	cd861f3a59f089c5	(empty)	ed861f3a59f089c5	lh3.googleusercontent.com	h3	IISiiiishhhoIIHHhoHHHoOOOoO
+1788187380.664795	CAhEQF2gJTi0ABO8c	192.168.1.109	44005	172.217.118.4	443	1	0d820bdd7541771e	(empty)	ed820bdd7541771e	content-autofill.googleapis.com	h3	IISiiiishhoIHHhHOoOoOoO
+1788187384.281920	Cvlh8z1qXvSvQkuvj	192.168.1.109	39498	192.178.211.139	443	1	f174911c31295ed2	(empty)	f174911c31295ed2	classroom.google.com	h3	IIISZiiiiishooIHOOOOooOoOo
+1788187384.009735	CbNKc33RfvyC7yNfYh	192.168.1.109	38966	142.250.67.14	443	1	a485741ebe027c28	(empty)	e485741ebe027c28	drive.google.com	h3	IIISZiiZiZZZZiishoooIHOOoO
+1788187385.503020	CFn0bY1dLGkxJB6I0l	192.168.1.109	43569	192.178.211.95	443	1	43fef3d38484fb11	(empty)	e3fef3d38484fb11	safebrowsing.googleapis.com	h3	IIISZZiiiiisIhoooHOOOo
+#close	2026-08-31-20-13-12

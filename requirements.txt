@@ -1,0 +1,10 @@
+scapy
+pandas
+numpy
+scikit-learn
+pyyaml
+joblib
+streamlit
+pytest
+matplotlib
+jupyter
