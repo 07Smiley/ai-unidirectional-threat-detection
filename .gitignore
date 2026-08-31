@@ -1,0 +1,6 @@
+# Local network traffic data
+data/raw/*
+data/processed/features.csv
+data/processed/zeek/
+*.pcap
+*.pcapng

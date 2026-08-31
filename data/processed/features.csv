@@ -1,3 +1,0 @@
-ts,uid,id.orig_h,id.orig_p,id.resp_h,id.resp_p,proto,service,duration,orig_bytes,resp_bytes,conn_state,local_orig,local_resp,missed_bytes,history,orig_pkts,orig_ip_bytes,resp_pkts,resp_ip_bytes,tunnel_parents,ip_proto,flow_duration,total_packets,total_bytes,packet_rate,byte_rate,average_packet_size,byte_ratio,packet_ratio
-1747147647.668533,Cw87hV17YCfGlGjvY9,192.168.1.8,52917,192.0.78.212,80,tcp,http,0.098478,71,377,SF,T,F,0,ShADadFf,6,335,4,549,-,6,0.098478,10,448,101.5455228578972,4549.239424033794,44.8,0.1883289124668435,1.5
-1747147654.27566,CJFqQd2UxnAw8DAbeb,192.168.1.8,52918,192.0.78.150,80,tcp,http,0.100107,73,377,SF,T,F,0,ShADadFf,6,337,4,549,-,6,0.100107,10,450,99.89311436762664,4495.190146543198,45.0,0.19363395225464192,1.5
