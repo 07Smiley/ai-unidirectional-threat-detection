@@ -145,11 +145,10 @@ if __name__ == "__main__":
     print("\n=== Feature Names ===")
     print(feature_df.columns.tolist())
     # Create security features
-feature_df = create_flow_features(df)
+if __name__ == "__main__":
+    feature_df = create_flow_features(df)
 
-# Save extracted features
-output_file = "data/processed/features.csv"
+    output_file = "data/processed/features.csv"
+    feature_df.to_csv(output_file, index=False)
 
-feature_df.to_csv(output_file, index=False)
-
-print(f"\nFeatures saved to: {output_file}")
+    print(f"Features saved to {output_file}")

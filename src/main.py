@@ -1,7 +1,7 @@
 import sys
 from scapy.all import rdpcap
 
-from src.features.flow_features import extract_flow_features
+from src.features.flow_features import create_flow_features
 from src.detection.scanning import detect_scanning
 from src.detection.ddos import detect_ddos
 from src.detection.beaconing import detect_c2
@@ -24,13 +24,13 @@ def main():
 
     print(f"Packets loaded: {len(packets)}")
 
-    flows = extract_flow_features(packets)
+    flows = create_flow_features(packets)
 
     print(f"Flows extracted: {len(flows)}")
 
     scanning_results = detect_scanning(flows)
     ddos_results = detect_ddos(flows)
-    beaconing_results = detect_beaconing(flows)
+    beaconing_results = detect_c2(flows)
 
     print("\n========== DETECTION RESULTS ==========")
 
