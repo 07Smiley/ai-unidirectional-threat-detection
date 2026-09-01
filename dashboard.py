@@ -1,8 +1,17 @@
 import json
 import os
+import time
 
+from dotenv import load_dotenv
 from flask import Flask, render_template, jsonify, request
 from google import genai
+from google.genai.errors import ServerError
+
+# Load variables from a .env file in the current working directory (if
+# present) into os.environ. This MUST happen before get_gemini_client()
+# reads GEMINI_API_KEY, or the key will never be picked up even if it's
+# sitting right there in .env.
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -10,7 +19,7 @@ app = Flask(__name__)
 # GEMINI CLIENT
 #
 # Reads the API key from the GEMINI_API_KEY environment variable — put that
-# in your .env (and load it with python-dotenv, or export it before running).
+# in your .env (loaded above via python-dotenv) or export it before running.
 # The client is created once at import time; every chat request reuses it.
 # =============================================================================
 
@@ -227,22 +236,52 @@ def answer_group_chat(group_id, message):
 
     try:
         client = get_gemini_client()
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-        )
-        raw = (response.text or "").strip()
+    except RuntimeError as e:
+        # GEMINI_API_KEY missing — surfaced directly so it's obvious in the UI.
+        print(f"[Gemini config error] {e}")
+        return {"lead": str(e)}
+
+    # Use a Chat session (send_message) rather than a bare generate_content
+    # call — this is what the SDK itself recommends, and it avoids the
+    # "Direct use of AFC in Models.generate_content is not recommended"
+    # warning. We don't register any tools/functions, so behavior is
+    # otherwise identical to a single-turn call.
+    chat = client.chats.create(model=GEMINI_MODEL)
+
+    raw = None
+    last_error = None
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = chat.send_message(prompt)
+            raw = (response.text or "").strip()
+            break
+        except ServerError as e:
+            # Transient overload (503) or other server-side error — back off
+            # and retry a couple of times before giving up.
+            last_error = e
+            print(f"[Gemini server error, attempt {attempt}/{max_attempts}] {e}")
+            if attempt < max_attempts:
+                time.sleep(1.5 * attempt)  # 1.5s, then 3s
+        except Exception as e:
+            last_error = e
+            print(f"[Gemini call failed] {type(e).__name__}: {e}")
+            break
+
+    if raw is None:
+        if isinstance(last_error, ServerError):
+            return {"lead": "Gemini is temporarily overloaded — please try again in a moment."}
+        return {"lead": "Couldn't reach Gemini right now — try again in a moment."}
+
+    try:
         raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         parsed = json.loads(raw)
         lead = parsed.get("lead") or "I couldn't find a clear answer in this source's logs."
         bullets = parsed.get("bullets") or None
         return {"lead": lead, "bullets": bullets} if bullets else {"lead": lead}
-    except RuntimeError as e:
-        return {"lead": str(e)}
-    except (json.JSONDecodeError, AttributeError):
+    except (json.JSONDecodeError, AttributeError) as e:
+        print(f"[Gemini parse error] {e}")
         return {"lead": "Got a response I couldn't parse — try rephrasing the question."}
-    except Exception:
-        return {"lead": "Couldn't reach Gemini right now — try again in a moment."}
 
 
 # =============================================================================
