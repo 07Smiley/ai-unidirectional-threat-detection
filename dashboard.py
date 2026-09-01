@@ -1,6 +1,34 @@
+import json
+import os
+
 from flask import Flask, render_template, jsonify, request
+from google import genai
 
 app = Flask(__name__)
+
+# =============================================================================
+# GEMINI CLIENT
+#
+# Reads the API key from the GEMINI_API_KEY environment variable — put that
+# in your .env (and load it with python-dotenv, or export it before running).
+# The client is created once at import time; every chat request reuses it.
+# =============================================================================
+
+GEMINI_MODEL = "gemini-3.5-flash"
+_gemini_client = None
+
+
+def get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "GEMINI_API_KEY is not set — add it to your .env or environment."
+            )
+        _gemini_client = genai.Client(api_key=api_key)
+    return _gemini_client
+
 
 # =============================================================================
 # SAMPLE DATA — stands in for the real pipeline until Zeek + the ML model are
@@ -10,8 +38,8 @@ app = Flask(__name__)
 #                             verdicts, one row per source IP (+ host if known)
 #   get_group_logs()       -> the individual flows Zeek logged for that source
 #   get_group_analysis()   -> the model's structured verdict for that source
-#   answer_group_chat()    -> a real model/LLM call, given ONLY that source's
-#                             logs as context (never the whole dataset)
+#   answer_group_chat()    -> calls Gemini, given ONLY that source's logs as
+#                             context (never the whole dataset)
 #
 # The Flask routes at the bottom (api_groups, api_group_logs, etc.) are the
 # stable contract the frontend already speaks — keep their response shapes
@@ -168,50 +196,53 @@ def get_group_analysis(group_id):
     }
 
 
+CHAT_SYSTEM_PROMPT = """You are Sentry's per-source flow analyst. You are given ONLY the raw \
+logged flows for a single traffic source (never any other source's data) as JSON, plus a \
+question from a security analyst. Answer using only what's in the provided flows — never \
+invent flow ids, ports, or numbers that aren't present in the data.
+
+Respond with ONLY a JSON object, no markdown fences, no commentary outside the JSON, in \
+exactly this shape:
+{"lead": "<one or two sentence answer>", "bullets": ["<optional supporting point>", ...]}
+
+"bullets" is optional — omit it (or use an empty list) when the answer doesn't need supporting \
+points. Keep "lead" concise and specific to the question asked."""
+
+
 def answer_group_chat(group_id, message):
     """Answer a follow-up question using ONLY this source's own logs.
 
-    Replace this with a real model/LLM call — pass it get_group_logs(group_id)
-    as its entire context so it structurally cannot answer from any other
-    source's traffic.
+    Sends get_group_logs(group_id) to Gemini as its entire data context, so
+    it structurally cannot answer from any other source's traffic.
     """
     logs = get_group_logs(group_id)
-    q = (message or "").lower()
+    if not logs:
+        return {"lead": "No logged flows for this source."}
 
-    id_match = next((l for l in logs if l["id"].lower() in q), None)
-    if id_match:
-        return {
-            "lead": f"{id_match['id']}: {id_match['src_ip']} → {id_match['dst_ip']}:{id_match['dst_port']}, "
-                    f"classified {id_match['label']} at {id_match['confidence']*100:.1f}% confidence.",
-            "bullets": id_match["why"],
-        }
+    prompt = (
+        f"{CHAT_SYSTEM_PROMPT}\n\n"
+        f"Flows for source {group_id}:\n{json.dumps(logs, indent=2)}\n\n"
+        f"Question: {message}"
+    )
 
-    if any(w in q for w in ["how many", "count"]):
-        n = sum(1 for l in logs if l["label"] == "DDoS")
-        return {"lead": f"{n} of {len(logs)} flows from this source are flagged DDoS."}
-
-    if any(w in q for w in ["highest", "worst", "most confident", "top"]):
-        top = max(logs, key=lambda l: l["confidence"])
-        return {
-            "lead": f"Highest-confidence flow is {top['id']} at {top['confidence']*100:.1f}% ({top['label']}).",
-            "bullets": top["why"],
-        }
-
-    if any(w in q for w in ["port", "target"]):
-        ports = sorted({l["dst_port"] for l in logs})
-        return {
-            "lead": f"This source targeted port(s): {', '.join(str(p) for p in ports)}.",
-            "bullets": ["Port is metadata only — it was never fed to the model as a feature."],
-        }
-
-    if any(w in q for w in ["why", "reason", "evidence"]):
-        top = max(logs, key=lambda l: l["confidence"])
-        return {"lead": f"Strongest evidence, from {top['id']}:", "bullets": top["why"]}
-
-    return {
-        "lead": "I can only answer from this source's own logs — try asking about a specific flow id, "
-                "counts, confidence, ports, or why it was flagged."
-    }
+    try:
+        client = get_gemini_client()
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+        )
+        raw = (response.text or "").strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(raw)
+        lead = parsed.get("lead") or "I couldn't find a clear answer in this source's logs."
+        bullets = parsed.get("bullets") or None
+        return {"lead": lead, "bullets": bullets} if bullets else {"lead": lead}
+    except RuntimeError as e:
+        return {"lead": str(e)}
+    except (json.JSONDecodeError, AttributeError):
+        return {"lead": "Got a response I couldn't parse — try rephrasing the question."}
+    except Exception:
+        return {"lead": "Couldn't reach Gemini right now — try again in a moment."}
 
 
 # =============================================================================
