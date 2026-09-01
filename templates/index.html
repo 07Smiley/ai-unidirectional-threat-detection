@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sentry — Behavioral DDoS Detection</title>
+<style>
+  :root{
+    /* ---- Spasex design tokens ---- */
+    --canvas-night: #000000;
+    --canvas-night-soft: #0a0a0a;
+    --canvas-light: #ffffff;
+    --canvas-cool: #f0f0fa;
+    --on-primary: #ffffff;
+    --on-primary-mute: #f0f0fa;
+    --ink: #000000;
+    --ink-mute: #5a5a5f;
+    --hairline-on-dark: #3a3a3f;
+    --hairline-on-light: #e0e0e8;
+    --link-on-dark: #ffffff;
+
+    /* semantic aliases — monochrome only, no brand accent colors.
+       "attention" (flagged/DDoS) = full white; "muted" (ok/benign) = soft off-white */
+    --attention: var(--on-primary);
+    --muted-ok: var(--on-primary-mute);
+
+    --rounded-xs: 4px;
+    --rounded-sm: 8px;
+    --rounded-md: 16px;
+    --rounded-pill: 32px;
+    --rounded-full: 9999px;
+
+    --sp-xxs: 4px;
+    --sp-xs: 8px;
+    --sp-sm: 12px;
+    --sp-md: 16px;
+    --sp-lg: 18px;
+    --sp-xl: 24px;
+    --sp-xxl: 32px;
+    --sp-huge: 48px;
+
+    font-family: 'D-DIN', Arial, Verdana, sans-serif;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    background:var(--canvas-night);
+    color:var(--on-primary);
+    min-height:100vh;
+    line-height:1.5;
+    font-family:'D-DIN', Arial, Verdana, sans-serif;
+  }
+  /* Brand system uses no monospace tier — D-DIN carries technical text too */
+  .mono{ font-family:'D-DIN', Arial, Verdana, sans-serif; letter-spacing:0.32px; }
+
+  .caps{ text-transform:uppercase; letter-spacing:0.96px; }
+
+  /* ---------- header (nav-bar-overlay) ---------- */
+  header{
+    background:var(--canvas-night);
+    color:var(--on-primary);
+    padding:var(--sp-xl) var(--sp-xxl);
+    display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--hairline-on-dark);
+  }
+  .brand{ display:flex; align-items:center; gap:var(--sp-sm); }
+  .brand svg{ width:24px; height:24px; }
+  .brand-text h1{
+    font-family:'D-DIN-Bold', 'Arial Narrow', Arial, Verdana, sans-serif;
+    font-size:20px; font-weight:700; letter-spacing:1.2px;
+    text-transform:uppercase;
+  }
+  .brand-text p{
+    font-size:12px; color:var(--on-primary-mute); margin-top:4px;
+    text-transform:uppercase; letter-spacing:0.96px; line-height:2.0;
+  }
+  .model-badge{
+    font-family:'D-DIN', Arial, Verdana, sans-serif;
+    font-size:13.008px; font-weight:700; letter-spacing:1.17px;
+    text-transform:uppercase;
+    background:transparent; color:var(--on-primary);
+    padding:9px 18px; border-radius:var(--rounded-pill);
+    border:1px solid var(--on-primary);
+  }
+
+  /* ---------- layout ---------- */
+  .shell{ max-width:1440px; margin:0 auto; padding:var(--sp-xl) var(--sp-xxl) var(--sp-huge); display:flex; flex-direction:column; gap:var(--sp-xl); }
+
+  .stats{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:var(--sp-md); }
+  .stat{ background:var(--canvas-night-soft); border:1px solid var(--hairline-on-dark); border-radius:var(--rounded-sm); padding:var(--sp-lg) var(--sp-xl); }
+  .stat .label{ font-size:12px; color:var(--on-primary-mute); text-transform:uppercase; letter-spacing:0.96px; }
+  .stat .value{ font-size:26px; font-weight:700; margin-top:var(--sp-xs); color:var(--on-primary); font-family:'D-DIN-Bold', 'Arial Narrow', Arial, Verdana, sans-serif; letter-spacing:0.5px; }
+  .stat .sub{ font-size:11.5px; color:var(--ink-mute); margin-top:var(--sp-xxs); }
+  .stat.flag .value{ color:var(--attention); }
+  .stat.ok .value{ color:var(--muted-ok); }
+
+  .main{ display:grid; grid-template-columns:1fr 1.4fr; gap:var(--sp-xl); align-items:start; }
+  @media (max-width: 980px){ .main{ grid-template-columns:1fr; } }
+
+  .panel{ background:var(--canvas-night-soft); border:1px solid var(--hairline-on-dark); border-radius:var(--rounded-sm); overflow:hidden; }
+  .panel-head{ display:flex; align-items:center; justify-content:space-between; padding:var(--sp-md) var(--sp-lg); border-bottom:1px solid var(--hairline-on-dark); }
+  .panel-head h2{
+    font-size:13.008px; font-weight:700; color:var(--on-primary);
+    text-transform:uppercase; letter-spacing:1.17px;
+  }
+  .panel-head .count{
+    font-size:11px; color:var(--on-primary-mute);
+    background:transparent; padding:4px 12px; border-radius:var(--rounded-pill); border:1px solid var(--hairline-on-dark);
+    text-transform:uppercase; letter-spacing:0.6px;
+  }
+
+  /* source list */
+  .source-list{ max-height:640px; overflow-y:auto; }
+  .source-row{
+    display:flex; align-items:center; gap:13px; padding:var(--sp-md) var(--sp-lg);
+    border-bottom:1px solid var(--hairline-on-dark); cursor:pointer; transition:background .12s ease;
+  }
+  .source-row:hover{ background:rgba(255,255,255,0.04); }
+  .source-row.active{ background:rgba(255,255,255,0.06); box-shadow:inset 3px 0 0 var(--on-primary); }
+  .source-row .sev{ width:8px; height:8px; border-radius:var(--rounded-full); flex-shrink:0; }
+  .source-row .who{ flex:1; min-width:0; }
+  .source-row .primary{ font-size:13px; color:var(--on-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .source-row .secondary{ font-size:11.5px; color:var(--ink-mute); margin-top:2px; }
+  .source-row .count-badge{
+    font-size:11.5px; font-weight:700; color:var(--on-primary-mute);
+    background:transparent; border:1px solid var(--hairline-on-dark); border-radius:var(--rounded-pill); padding:4px 12px; flex-shrink:0;
+    text-transform:uppercase; letter-spacing:0.6px;
+  }
+  .source-row .conf{ font-size:12.5px; font-weight:700; text-align:right; flex-shrink:0; width:46px; }
+
+  .empty{ padding:56px 24px; text-align:center; color:var(--ink-mute); font-size:13px; }
+
+  /* right column */
+  .right-col{ display:flex; flex-direction:column; gap:var(--sp-xl); }
+
+  /* logs panel */
+  .log-list{ max-height:280px; overflow-y:auto; }
+  .log-row{ display:flex; align-items:center; gap:12px; padding:11px var(--sp-lg); border-bottom:1px solid var(--hairline-on-dark); }
+  .log-row .lbl{
+    font-size:10.5px; font-weight:700; padding:3px 10px; border-radius:var(--rounded-pill); flex-shrink:0;
+    text-transform:uppercase; letter-spacing:0.6px;
+  }
+  .log-row .lbl.ddos{ background:var(--on-primary); color:var(--ink); }
+  .log-row .lbl.benign{ background:transparent; color:var(--on-primary-mute); border:1px solid var(--hairline-on-dark); }
+  .log-row .info{ flex:1; min-width:0; }
+  .log-row .path{ font-size:12px; color:var(--on-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .log-row .meta{ font-size:11px; color:var(--ink-mute); margin-top:2px; }
+  .log-row .conf{ font-size:11.5px; color:var(--on-primary-mute); flex-shrink:0; width:44px; text-align:right; }
+  .log-row .time{ font-size:10.5px; color:var(--ink-mute); flex-shrink:0; width:52px; text-align:right; }
+
+  /* analysis / chat panel */
+  .chat-wrap{ display:flex; flex-direction:column; height:380px; }
+  .chat-log{ flex:1; overflow-y:auto; padding:var(--sp-md) var(--sp-lg); display:flex; flex-direction:column; gap:var(--sp-sm); }
+  .chat-row{ display:flex; }
+  .chat-row.user{ justify-content:flex-end; }
+  .chat-row .bubble{
+    max-width:80%; font-size:13px; line-height:1.55; padding:12px var(--sp-md); border-radius:var(--rounded-sm);
+    background:transparent; border:1px solid var(--hairline-on-dark); color:var(--on-primary);
+  }
+  .chat-row.user .bubble{ background:var(--on-primary); border-color:var(--on-primary); color:var(--ink); }
+  .chat-row .bubble .verdict{
+    display:inline-block; font-size:11px; font-weight:700;
+    padding:4px 11px; border-radius:var(--rounded-pill); margin-bottom:8px;
+    text-transform:uppercase; letter-spacing:0.6px;
+  }
+  .chat-row .bubble .verdict.ddos{ background:var(--on-primary); color:var(--ink); }
+  .chat-row.user .bubble .verdict.ddos{ background:var(--ink); color:var(--on-primary); }
+  .chat-row .bubble .verdict.benign{ background:transparent; color:var(--on-primary-mute); border:1px solid var(--hairline-on-dark); }
+  .chat-row .bubble .lead{ margin-bottom:6px; }
+  .chat-row .bubble ul{ list-style:none; display:flex; flex-direction:column; gap:5px; margin-top:4px; }
+  .chat-row .bubble li{ padding-left:13px; position:relative; color:var(--ink-mute); }
+  .chat-row.user .bubble li{ color:var(--ink-mute); }
+  .chat-row .bubble li::before{ content:'—'; position:absolute; left:0; color:var(--on-primary); }
+  .chat-row.user .bubble li::before{ color:var(--ink); }
+  .chat-input-row{ display:flex; gap:var(--sp-sm); padding:var(--sp-md) var(--sp-lg); border-top:1px solid var(--hairline-on-dark); }
+  .chat-input{
+    flex:1; background:transparent; border:1px solid var(--hairline-on-dark); border-radius:var(--rounded-pill);
+    padding:10px 18px; color:var(--on-primary); font-size:13px; outline:none;
+    font-family:'D-DIN', Arial, Verdana, sans-serif;
+  }
+  .chat-input::placeholder{ color:var(--ink-mute); }
+  .chat-input:focus{ border-color:var(--on-primary); }
+  .chat-input:disabled{ color:var(--ink-mute); }
+  .chat-send{
+    background:var(--on-primary); color:var(--ink); border:1px solid var(--on-primary); border-radius:var(--rounded-pill);
+    padding:0 20px; font-weight:700; font-size:13.008px; letter-spacing:1.17px; text-transform:uppercase; cursor:pointer;
+    font-family:'D-DIN', Arial, Verdana, sans-serif;
+  }
+  .chat-send:disabled{ background:transparent; color:var(--ink-mute); border-color:var(--hairline-on-dark); cursor:not-allowed; }
+
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  ::-webkit-scrollbar-thumb{ background:var(--hairline-on-dark); border-radius:8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2L3 6V12C3 17 6.9 21.4 12 22C17.1 21.4 21 17 21 12V6L12 2Z" stroke="#ffffff" stroke-width="1.6"/>
+      <path d="M8.5 12.2L10.8 14.5L15.7 9.5" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div class="brand-text">
+      <h1>Sentry</h1>
+      <p>Behavioral DDoS detection, grouped by source</p>
+    </div>
+  </div>
+  <span class="model-badge" id="modelBadge">—</span>
+</header>
+
+<div class="shell">
+
+  <div class="stats" id="statStrip"></div>
+
+  <div class="main">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Flagged sources</h2>
+        <span class="count" id="sourceCount">0 sources</span>
+      </div>
+      <div class="source-list" id="sourceList"></div>
+    </section>
+
+    <div class="right-col">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Logs</h2>
+          <span class="count mono" id="logHeaderId">—</span>
+        </div>
+        <div id="logBody"><div class="empty">Select a source on the left to see every flow it sent.</div></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Analysis</h2>
+          <span class="count mono" id="chatHeaderId">—</span>
+        </div>
+        <div class="chat-wrap">
+          <div class="chat-log" id="chatLog">
+            <div class="chat-row bot"><div class="bubble">Select a source to load its analysis, then ask follow-up questions — answers are scoped to that source's own logs only.</div></div>
+          </div>
+          <form class="chat-input-row" id="chatForm">
+            <input class="chat-input mono" id="chatInput" type="text" placeholder="Select a source first…" autocomplete="off" disabled>
+            <button class="chat-send" type="submit" id="chatSend" disabled>Ask</button>
+          </form>
+        </div>
+      </section>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   BACKEND CONTRACT — see app.py
+
+   GET  /api/stats                     -> { flows_analyzed, flows_analyzed_window,
+                                              flagged, flagged_sources, avg_confidence, model }
+   GET  /api/groups                    -> [{ group_id, src_ip, host, request_count,
+                                              label, confidence, last_seen }]
+   GET  /api/groups/<id>/logs          -> [{ id, timestamp, src_ip, dst_ip, dst_port,
+                                              protocol, confidence, label,
+                                              packets_per_sec, why[], features[] }]
+   GET  /api/groups/<id>/analysis      -> { lead, bullets[], label, confidence }
+   POST /api/groups/<id>/chat          body: { message }
+                                        -> { lead, bullets? }  — scoped to that group only
+
+   Swap the Zeek/ML pipeline in on the backend; none of the code below needs
+   to change as long as these shapes hold.
+   ============================================================ */
+
+let selectedGroup = null;
+let groups = [];
+
+async function loadStats(){
+  const res = await fetch('/api/stats');
+  const s = await res.json();
+  document.getElementById('modelBadge').textContent = s.model;
+  const flagPct = ((s.flagged / s.flows_analyzed) * 100).toFixed(3);
+  const strip = [
+    {label:'Flows analyzed', value:s.flows_analyzed.toLocaleString(), sub:s.flows_analyzed_window, cls:''},
+    {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flows, ' + flagPct + '% of total', cls:'flag'},
+    {label:'Avg confidence', value:(s.avg_confidence*100).toFixed(1)+'%', sub:'on flagged flows', cls:'ok'},
+    {label:'Active model', value:s.model, sub:'behavioral features only', cls:''}
+  ];
+  document.getElementById('statStrip').innerHTML = strip.map(s => `
+    <div class="stat ${s.cls}">
+      <div class="label">${s.label}</div>
+      <div class="value mono">${s.value}</div>
+      <div class="sub">${s.sub}</div>
+    </div>`).join('');
+}
+
+async function loadGroups(){
+  const res = await fetch('/api/groups');
+  groups = await res.json();
+  renderGroups();
+}
+
+function renderGroups(){
+  document.getElementById('sourceCount').textContent = groups.length + ' sources';
+  const list = document.getElementById('sourceList');
+  if(groups.length === 0){
+    list.innerHTML = '<div class="empty">No sources in range.</div>';
+    return;
+  }
+  list.innerHTML = groups.map(g => {
+    const flagged = g.label === 'DDoS';
+    return `
+    <div class="source-row ${g.group_id===selectedGroup?'active':''}" data-id="${g.group_id}">
+      <div class="sev" style="background:${flagged?'var(--attention)':'var(--muted-ok)'}"></div>
+      <div class="who">
+        <div class="primary">${g.host ? g.host : g.src_ip}</div>
+        <div class="secondary">${g.host ? g.src_ip + ' · ' : ''}last seen ${g.last_seen}</div>
+      </div>
+      <div class="count-badge">${g.request_count} req</div>
+      <div class="conf" style="color:${flagged?'var(--attention)':'var(--muted-ok)'}">${(g.confidence*100).toFixed(0)}%</div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.source-row').forEach(row => {
+    row.addEventListener('click', () => selectGroup(row.dataset.id));
+  });
+}
+
+async function selectGroup(id){
+  selectedGroup = id;
+  renderGroups();
+  document.getElementById('logHeaderId').textContent = id;
+  document.getElementById('chatHeaderId').textContent = id;
+
+  document.getElementById('logBody').innerHTML = '<div class="empty">Loading…</div>';
+  const [logsRes, analysisRes] = await Promise.all([
+    fetch(`/api/groups/${encodeURIComponent(id)}/logs`),
+    fetch(`/api/groups/${encodeURIComponent(id)}/analysis`)
+  ]);
+  const logs = await logsRes.json();
+  const analysis = await analysisRes.json();
+
+  renderLogs(logs);
+  resetChat(analysis);
+
+  const input = document.getElementById('chatInput');
+  const send = document.getElementById('chatSend');
+  input.disabled = false;
+  send.disabled = false;
+  input.placeholder = `Ask about ${id}…`;
+}
+
+function renderLogs(logs){
+  const body = document.getElementById('logBody');
+  if(!logs.length){
+    body.innerHTML = '<div class="empty">No logged flows for this source.</div>';
+    return;
+  }
+  body.innerHTML = `<div class="log-list">${logs.map(l => `
+    <div class="log-row">
+      <span class="lbl ${l.label==='DDoS'?'ddos':'benign'}">${l.label}</span>
+      <div class="info">
+        <div class="path">${l.id} → ${l.dst_ip}:${l.dst_port}</div>
+        <div class="meta">${l.protocol} · ${l.packets_per_sec.toLocaleString()} pkt/s</div>
+      </div>
+      <div class="conf">${(l.confidence*100).toFixed(0)}%</div>
+      <div class="time mono">${l.timestamp}</div>
+    </div>`).join('')}</div>`;
+}
+
+function resetChat(analysis){
+  const log = document.getElementById('chatLog');
+  log.innerHTML = '';
+  if(analysis && !analysis.error){
+    addChatRow({ lead: analysis.lead, bullets: analysis.bullets, verdict: analysis.label }, false);
+  }
+}
+
+function addChatRow(payload, isUser){
+  const log = document.getElementById('chatLog');
+  const row = document.createElement('div');
+  row.className = 'chat-row ' + (isUser ? 'user' : 'bot');
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  const verdictHtml = payload.verdict
+    ? `<div class="verdict ${payload.verdict==='DDoS'?'ddos':'benign'}">${payload.verdict}</div><br>`
+    : '';
+  const bulletsHtml = (payload.bullets && payload.bullets.length)
+    ? `<ul>${payload.bullets.map(b => `<li>${b}</li>`).join('')}</ul>` : '';
+  bubble.innerHTML = verdictHtml + `<div class="lead">${payload.lead}</div>` + bulletsHtml;
+  row.appendChild(bubble);
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function askQuestion(q){
+  addChatRow({ lead: q }, true);
+  try{
+    const res = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: q })
+    });
+    const data = await res.json();
+    addChatRow(data, false);
+  }catch(e){
+    addChatRow({ lead: "Couldn't reach the analysis backend — try again in a moment." }, false);
+  }
+}
+
+document.getElementById('chatForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if(!selectedGroup) return;
+  const input = document.getElementById('chatInput');
+  const q = input.value.trim();
+  if(!q) return;
+  askQuestion(q);
+  input.value = '';
+});
+
+loadStats();
+loadGroups();
+</script>
+
+</body>
+</html>
