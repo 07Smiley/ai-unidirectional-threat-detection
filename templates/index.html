@@ -171,6 +171,23 @@
   .chat-row.user .bubble li{ color:var(--ink-mute); }
   .chat-row .bubble li::before{ content:'—'; position:absolute; left:0; color:var(--on-primary); }
   .chat-row.user .bubble li::before{ color:var(--ink); }
+
+  /* interaction (typing) bubble — shown while waiting on a Gemini response */
+  .chat-row.typing .bubble{ padding:14px var(--sp-md); }
+  .typing-dots{ display:flex; align-items:center; gap:5px; height:6px; }
+  .typing-dots span{
+    width:6px; height:6px; border-radius:var(--rounded-full);
+    background:var(--on-primary-mute);
+    animation: typingPulse 1.2s infinite ease-in-out both;
+  }
+  .typing-dots span:nth-child(1){ animation-delay:0s; }
+  .typing-dots span:nth-child(2){ animation-delay:0.15s; }
+  .typing-dots span:nth-child(3){ animation-delay:0.3s; }
+  @keyframes typingPulse{
+    0%, 80%, 100% { opacity:0.25; transform:scale(0.85); }
+    40% { opacity:1; transform:scale(1); }
+  }
+
   .chat-input-row{ display:flex; gap:var(--sp-sm); padding:var(--sp-md) var(--sp-lg); border-top:1px solid var(--hairline-on-dark); }
   .chat-input{
     flex:1; background:transparent; border:1px solid var(--hairline-on-dark); border-radius:var(--rounded-pill);
@@ -237,7 +254,7 @@
         </div>
         <div class="chat-wrap">
           <div class="chat-log" id="chatLog">
-            <div class="chat-row bot"><div class="bubble">Select a source to load its analysis, then ask follow-up questions — answers are scoped to that source's own logs only.</div></div>
+            <div class="chat-row bot"><div class="bubble">Select a source to load its analysis, then ask follow-up questions — answers are scoped to that source's own logs only, and the conversation is saved, so it's still here if you refresh.</div></div>
           </div>
           <form class="chat-input-row" id="chatForm">
             <input class="chat-input mono" id="chatInput" type="text" placeholder="Select a source first…" autocomplete="off" disabled>
@@ -262,8 +279,13 @@
                                               protocol, confidence, label,
                                               packets_per_sec, why[], features[] }]
    GET  /api/groups/<id>/analysis      -> { lead, bullets[], label, confidence }
+   GET  /api/groups/<id>/chat/history  -> [{ sender: "user"|"bot", lead, bullets? }, ...]
+                                        — every turn already exchanged for this source,
+                                          oldest first; used to replay the chat on load
    POST /api/groups/<id>/chat          body: { message }
-                                        -> { lead, bullets? }  — scoped to that group only
+                                        -> { lead, bullets? }  — scoped to that group only,
+                                           remembers earlier turns server-side, and is
+                                           itself saved into /chat/history for next time
 
    Swap the Zeek/ML pipeline in on the backend; none of the code below needs
    to change as long as these shapes hold.
@@ -329,15 +351,17 @@ async function selectGroup(id){
   document.getElementById('chatHeaderId').textContent = id;
 
   document.getElementById('logBody').innerHTML = '<div class="empty">Loading…</div>';
-  const [logsRes, analysisRes] = await Promise.all([
+  const [logsRes, analysisRes, historyRes] = await Promise.all([
     fetch(`/api/groups/${encodeURIComponent(id)}/logs`),
-    fetch(`/api/groups/${encodeURIComponent(id)}/analysis`)
+    fetch(`/api/groups/${encodeURIComponent(id)}/analysis`),
+    fetch(`/api/groups/${encodeURIComponent(id)}/chat/history`)
   ]);
   const logs = await logsRes.json();
   const analysis = await analysisRes.json();
+  const history = await historyRes.json();
 
   renderLogs(logs);
-  resetChat(analysis);
+  resetChat(analysis, history);
 
   const input = document.getElementById('chatInput');
   const send = document.getElementById('chatSend');
@@ -364,11 +388,20 @@ function renderLogs(logs){
     </div>`).join('')}</div>`;
 }
 
-function resetChat(analysis){
+// The Analysis bubble (rule-based verdict) is regenerated fresh every time —
+// it's deterministic, so there's nothing to replay there. The chat Q&A that
+// follows it, though, only exists in chat_display on the backend, so it's
+// fetched as `history` and replayed in order right after.
+function resetChat(analysis, history){
   const log = document.getElementById('chatLog');
   log.innerHTML = '';
   if(analysis && !analysis.error){
     addChatRow({ lead: analysis.lead, bullets: analysis.bullets, verdict: analysis.label }, false);
+  }
+  if(Array.isArray(history)){
+    history.forEach(turn => {
+      addChatRow({ lead: turn.lead, bullets: turn.bullets }, turn.sender === 'user');
+    });
   }
 }
 
@@ -387,10 +420,28 @@ function addChatRow(payload, isUser){
   row.appendChild(bubble);
   log.appendChild(row);
   log.scrollTop = log.scrollHeight;
+  return row;
+}
+
+// Shown in place of a real reply while we're waiting on the backend —
+// the "interaction bubble": a bot-side bubble with three pulsing dots.
+function addTypingBubble(){
+  const log = document.getElementById('chatLog');
+  const row = document.createElement('div');
+  row.className = 'chat-row bot typing';
+  row.innerHTML = `<div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+  return row;
 }
 
 async function askQuestion(q){
   addChatRow({ lead: q }, true);
+  const typingRow = addTypingBubble();
+  const input = document.getElementById('chatInput');
+  const send = document.getElementById('chatSend');
+  input.disabled = true;
+  send.disabled = true;
   try{
     const res = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/chat`, {
       method: 'POST',
@@ -398,9 +449,15 @@ async function askQuestion(q){
       body: JSON.stringify({ message: q })
     });
     const data = await res.json();
+    typingRow.remove();
     addChatRow(data, false);
   }catch(e){
+    typingRow.remove();
     addChatRow({ lead: "Couldn't reach the analysis backend — try again in a moment." }, false);
+  }finally{
+    input.disabled = false;
+    send.disabled = false;
+    input.focus();
   }
 }
 

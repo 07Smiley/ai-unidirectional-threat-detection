@@ -1,10 +1,13 @@
 import json
 import os
+import sqlite3
 import time
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from flask import Flask, render_template, jsonify, request
 from google import genai
+from google.genai import types
 from google.genai.errors import ServerError
 
 # Load variables from a .env file in the current working directory (if
@@ -21,6 +24,10 @@ app = Flask(__name__)
 # Reads the API key from the GEMINI_API_KEY environment variable — put that
 # in your .env (loaded above via python-dotenv) or export it before running.
 # The client is created once at import time; every chat request reuses it.
+#
+# Kept on gemini-3.5-flash rather than a lighter/faster tier on purpose —
+# this bot is judging DDoS vs benign from log evidence, and flash-lite
+# trades reasoning quality for speed in a way that isn't worth it here.
 # =============================================================================
 
 GEMINI_MODEL = "gemini-3.5-flash"
@@ -37,6 +44,196 @@ def get_gemini_client():
             )
         _gemini_client = genai.Client(api_key=api_key)
     return _gemini_client
+
+
+# =============================================================================
+# CHAT PERSISTENCE (SQLite) — two tables, two different jobs
+#
+#   chat_history  -> the raw Gemini Content history for a source, in the
+#                     exact shape the SDK needs to resume a chat session
+#                     (client.chats.create(..., history=...)). This is what
+#                     gives the MODEL memory across restarts.
+#
+#   chat_display  -> a simple ordered list of {sender, lead, bullets} turns
+#                     for a source, in the exact shape the frontend renders
+#                     as chat bubbles. This is what gives the UI something
+#                     to replay after a page refresh — chat_history alone
+#                     isn't enough for that, because its first turn has the
+#                     raw log-dump/system-prompt text baked in rather than
+#                     the clean question the user actually typed, and its
+#                     model turns are JSON strings rather to be re-parsed
+#                     on every render.
+#
+# No setup needed: sqlite3 is in the Python standard library, and the .db
+# file plus both tables are created automatically on first run at
+# CHAT_DB_PATH (defaults to chat_history.db next to this file).
+# =============================================================================
+
+CHAT_DB_PATH = os.environ.get("CHAT_DB_PATH", "chat_history.db")
+
+
+def _db():
+    conn = sqlite3.connect(CHAT_DB_PATH)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_history (
+            group_id TEXT PRIMARY KEY,
+            history TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_display (
+            group_id TEXT PRIMARY KEY,
+            entries TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    return conn
+
+
+def load_history(group_id):
+    """Return this source's saved conversation as a list of Content objects
+    ready to hand back to the SDK, or None if nothing's been saved yet.
+    """
+    conn = _db()
+    try:
+        row = conn.execute(
+            "SELECT history FROM chat_history WHERE group_id = ?", (group_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    raw_turns = json.loads(row[0])
+    return [types.Content.model_validate(turn) for turn in raw_turns]
+
+
+def save_history(group_id, chat):
+    """Persist the chat session's current full history to disk."""
+    turns = [c.model_dump(exclude_none=True, mode="json") for c in chat.get_history()]
+    conn = _db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO chat_history (group_id, history, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(group_id) DO UPDATE SET
+                history = excluded.history,
+                updated_at = excluded.updated_at
+            """,
+            (group_id, json.dumps(turns), datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_display_history(group_id):
+    """Return this source's chat bubbles, oldest first, as a plain list of
+    {"sender": "user"|"bot", "lead": str, "bullets": [str, ...]?} — exactly
+    what the frontend needs to replay the conversation after a refresh.
+    """
+    conn = _db()
+    try:
+        row = conn.execute(
+            "SELECT entries FROM chat_display WHERE group_id = ?", (group_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return json.loads(row[0]) if row else []
+
+
+def append_display_turns(group_id, user_message, bot_payload):
+    """Append one user turn and one bot turn to this source's display
+    history. Called once per chat request, regardless of whether the bot's
+    reply was a real answer or an error message — either way it's what the
+    user actually saw, so a refresh should show the same thing.
+    """
+    entries = load_display_history(group_id)
+    entries.append({"sender": "user", "lead": user_message})
+    bot_entry = {"sender": "bot", "lead": bot_payload.get("lead", "")}
+    if bot_payload.get("bullets"):
+        bot_entry["bullets"] = bot_payload["bullets"]
+    entries.append(bot_entry)
+
+    conn = _db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO chat_display (group_id, entries, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(group_id) DO UPDATE SET
+                entries = excluded.entries,
+                updated_at = excluded.updated_at
+            """,
+            (group_id, json.dumps(entries), datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# PER-SOURCE CHAT MEMORY
+#
+# One Gemini `chat` session per group_id, kept in _gemini_chats for the life
+# of the process (fast path — no disk I/O for turns already loaded this
+# run), and mirrored to SQLite after every turn so it survives restarts.
+#
+# A source's first-ever question folds the log context + system prompt into
+# that same message rather than sending it as a separate priming round-trip
+# first — one model call instead of two, same context, same accuracy.
+# =============================================================================
+
+_gemini_chats = {}  # group_id -> chat session (in-process cache)
+
+
+def _send_with_retry(chat, message, max_attempts=3):
+    """Send a message on an existing chat session, retrying transient
+    Gemini server errors with backoff. Returns (raw_text, error).
+    Exactly one of the two is None.
+    """
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = chat.send_message(message)
+            return (response.text or "").strip(), None
+        except ServerError as e:
+            last_error = e
+            print(f"[Gemini server error, attempt {attempt}/{max_attempts}] {e}")
+            if attempt < max_attempts:
+                time.sleep(1.0 * attempt)  # 1s, then 2s
+        except Exception as e:
+            last_error = e
+            print(f"[Gemini call failed] {type(e).__name__}: {e}")
+            break
+    return None, last_error
+
+
+def get_or_create_group_chat(group_id, client):
+    """Return (chat, is_new). is_new is True only for a source that has
+    never been talked to before (no in-process session, nothing on disk) —
+    the caller uses that to decide whether this message needs the log
+    context folded in. No network call happens here; opening/resuming a
+    chat session is local, so this never adds latency on its own.
+    """
+    chat = _gemini_chats.get(group_id)
+    if chat is not None:
+        return chat, False
+
+    saved_history = load_history(group_id)
+    if saved_history:
+        chat = client.chats.create(model=GEMINI_MODEL, history=saved_history)
+        _gemini_chats[group_id] = chat
+        return chat, False
+
+    chat = client.chats.create(model=GEMINI_MODEL)
+    _gemini_chats[group_id] = chat
+    return chat, True
 
 
 # =============================================================================
@@ -208,31 +405,31 @@ def get_group_analysis(group_id):
 CHAT_SYSTEM_PROMPT = """You are Sentry's per-source flow analyst. You are given ONLY the raw \
 logged flows for a single traffic source (never any other source's data) as JSON, plus a \
 question from a security analyst. Answer using only what's in the provided flows — never \
-invent flow ids, ports, or numbers that aren't present in the data.
+invent flow ids, ports, or numbers that aren't present in the data. Remember earlier turns in \
+this conversation and use them for context on follow-up questions (e.g. "the one you just \
+mentioned", "that flow", "what about the other one").
 
 Respond with ONLY a JSON object, no markdown fences, no commentary outside the JSON, in \
 exactly this shape:
 {"lead": "<one or two sentence answer>", "bullets": ["<optional supporting point>", ...]}
 
 "bullets" is optional — omit it (or use an empty list) when the answer doesn't need supporting \
-points. Keep "lead" concise and specific to the question asked."""
+points. Keep "lead" concise and specific to the question asked. Every reply must follow that \
+exact JSON shape."""
 
 
 def answer_group_chat(group_id, message):
-    """Answer a follow-up question using ONLY this source's own logs.
+    """Answer a follow-up question using ONLY this source's own logs, with
+    memory of earlier turns — resumed from SQLite if the server restarted
+    since the last question about this source.
 
-    Sends get_group_logs(group_id) to Gemini as its entire data context, so
-    it structurally cannot answer from any other source's traffic.
+    For a source's first-ever question, the log context and system prompt
+    are folded into this same call rather than sent as a separate priming
+    round-trip first — one model call instead of two, no context lost.
     """
     logs = get_group_logs(group_id)
     if not logs:
         return {"lead": "No logged flows for this source."}
-
-    prompt = (
-        f"{CHAT_SYSTEM_PROMPT}\n\n"
-        f"Flows for source {group_id}:\n{json.dumps(logs, indent=2)}\n\n"
-        f"Question: {message}"
-    )
 
     try:
         client = get_gemini_client()
@@ -241,37 +438,35 @@ def answer_group_chat(group_id, message):
         print(f"[Gemini config error] {e}")
         return {"lead": str(e)}
 
-    # Use a Chat session (send_message) rather than a bare generate_content
-    # call — this is what the SDK itself recommends, and it avoids the
-    # "Direct use of AFC in Models.generate_content is not recommended"
-    # warning. We don't register any tools/functions, so behavior is
-    # otherwise identical to a single-turn call.
-    chat = client.chats.create(model=GEMINI_MODEL)
+    try:
+        chat, is_new = get_or_create_group_chat(group_id, client)
+    except Exception as e:
+        print(f"[Gemini session open failed] {type(e).__name__}: {e}")
+        return {"lead": "Couldn't reach Gemini right now — try again in a moment."}
 
-    raw = None
-    last_error = None
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        try:
-            response = chat.send_message(prompt)
-            raw = (response.text or "").strip()
-            break
-        except ServerError as e:
-            # Transient overload (503) or other server-side error — back off
-            # and retry a couple of times before giving up.
-            last_error = e
-            print(f"[Gemini server error, attempt {attempt}/{max_attempts}] {e}")
-            if attempt < max_attempts:
-                time.sleep(1.5 * attempt)  # 1.5s, then 3s
-        except Exception as e:
-            last_error = e
-            print(f"[Gemini call failed] {type(e).__name__}: {e}")
-            break
+    if is_new:
+        outgoing = (
+            f"{CHAT_SYSTEM_PROMPT}\n\n"
+            f"Flows for source {group_id}:\n{json.dumps(logs, indent=2)}\n\n"
+            f"Question: {message}\n\n"
+            f"(Respond with ONLY the JSON object as instructed.)"
+        )
+    else:
+        outgoing = f"{message}\n\n(Respond with ONLY the JSON object as instructed.)"
 
+    raw, err = _send_with_retry(chat, outgoing)
     if raw is None:
-        if isinstance(last_error, ServerError):
+        # Drop the broken in-process session so the next question resumes
+        # from the last good state saved on disk instead of retrying a
+        # chat that's in a bad state.
+        _gemini_chats.pop(group_id, None)
+        if isinstance(err, ServerError):
             return {"lead": "Gemini is temporarily overloaded — please try again in a moment."}
         return {"lead": "Couldn't reach Gemini right now — try again in a moment."}
+
+    # Successful turn — persist the updated conversation immediately so it
+    # survives a restart even if the very next request never happens.
+    save_history(group_id, chat)
 
     try:
         raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
@@ -331,9 +526,24 @@ def api_group_analysis(group_id):
     return jsonify(analysis)
 
 
+@app.route("/api/groups/<group_id>/chat/history")
+def api_group_chat_history(group_id):
+    """The chat bubbles already exchanged for this source, oldest first —
+    used to replay the conversation after a page refresh.
+
+    GET /api/groups/<src_ip>/chat/history
+    response: [{ "sender": "user"|"bot", "lead": "...", "bullets": [...]? }, ...]
+    """
+    if not get_group_logs(group_id):
+        return jsonify({"error": "unknown group"}), 404
+    return jsonify(load_display_history(group_id))
+
+
 @app.route("/api/groups/<group_id>/chat", methods=["POST"])
 def api_group_chat(group_id):
-    """Ask a follow-up question scoped to one source only.
+    """Ask a follow-up question scoped to one source only. Remembers earlier
+    turns for that source, resuming from disk across restarts, and records
+    the turn so a page refresh can replay it via /chat/history.
 
     POST /api/groups/<src_ip>/chat   body: { "message": "<user text>" }
     response: { "lead": "<one-line answer>", "bullets": ["...", ...] }  // bullets optional
@@ -341,8 +551,15 @@ def api_group_chat(group_id):
     if not get_group_logs(group_id):
         return jsonify({"error": "unknown group"}), 404
     body = request.get_json(silent=True) or {}
-    return jsonify(answer_group_chat(group_id, body.get("message", "")))
+    message = body.get("message", "")
+    result = answer_group_chat(group_id, message)
+    append_display_turns(group_id, message, result)
+    return jsonify(result)
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=9000)
+    # threaded=True so one slow in-flight Gemini call doesn't block every
+    # other request on this process — cheap concurrency win for the dev
+    # server. For real production traffic, run this behind gunicorn/uWSGI
+    # with multiple workers instead of python app.py directly.
+    app.run(debug=True, port=9000, threaded=True)
