@@ -269,7 +269,7 @@
 
 <script>
 /* ============================================================
-   BACKEND CONTRACT — see app.py
+   BACKEND CONTRACT — see dashboard.py
 
    GET  /api/stats                     -> { flows_analyzed, flows_analyzed_window,
                                               flagged, flagged_sources, avg_confidence, model }
@@ -280,43 +280,62 @@
                                               packets_per_sec, why[], features[] }]
    GET  /api/groups/<id>/analysis      -> { lead, bullets[], label, confidence }
    GET  /api/groups/<id>/chat/history  -> [{ sender: "user"|"bot", lead, bullets? }, ...]
-                                        — every turn already exchanged for this source,
-                                          oldest first; used to replay the chat on load
    POST /api/groups/<id>/chat          body: { message }
-                                        -> { lead, bullets? }  — scoped to that group only,
-                                           remembers earlier turns server-side, and is
-                                           itself saved into /chat/history for next time
+                                        -> { lead, bullets? }
 
-   Swap the Zeek/ML pipeline in on the backend; none of the code below needs
-   to change as long as these shapes hold.
+   Data now comes from the real Zeek + rule-based detection pipeline.
    ============================================================ */
 
 let selectedGroup = null;
 let groups = [];
 
+/* --- helpers for null-safe rendering --- */
+function fmtConf(c){
+  if(c == null) return '—';
+  return (c*100).toFixed(0)+'%';
+}
+function fmtPort(p){ return p != null ? p : '—'; }
+function fmtProto(p){ return p || '—'; }
+function fmtPps(p){ return p != null ? p.toLocaleString() : '0'; }
+
 async function loadStats(){
-  const res = await fetch('/api/stats');
-  const s = await res.json();
-  document.getElementById('modelBadge').textContent = s.model;
-  const flagPct = ((s.flagged / s.flows_analyzed) * 100).toFixed(3);
-  const strip = [
-    {label:'Flows analyzed', value:s.flows_analyzed.toLocaleString(), sub:s.flows_analyzed_window, cls:''},
-    {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flows, ' + flagPct + '% of total', cls:'flag'},
-    {label:'Avg confidence', value:(s.avg_confidence*100).toFixed(1)+'%', sub:'on flagged flows', cls:'ok'},
-    {label:'Active model', value:s.model, sub:'behavioral features only', cls:''}
-  ];
-  document.getElementById('statStrip').innerHTML = strip.map(s => `
-    <div class="stat ${s.cls}">
-      <div class="label">${s.label}</div>
-      <div class="value mono">${s.value}</div>
-      <div class="sub">${s.sub}</div>
-    </div>`).join('');
+  try{
+    const res = await fetch('/api/stats');
+    const s = await res.json();
+    document.getElementById('modelBadge').textContent = s.model || '—';
+    const total = s.flows_analyzed || 0;
+    const flagPct = total > 0 ? ((s.flagged / total) * 100).toFixed(3) : '0.000';
+    const strip = [
+      {label:'Flows analyzed', value:total.toLocaleString(), sub:s.flows_analyzed_window || '—', cls:''},
+      {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flows, ' + flagPct + '% of total', cls:'flag'},
+      {label:'Avg confidence', value:fmtConf(s.avg_confidence), sub:'on flagged flows', cls:'ok'},
+      {label:'Active model', value:s.model || '—', sub:'rule-based detection', cls:''}
+    ];
+    document.getElementById('statStrip').innerHTML = strip.map(s => `
+      <div class="stat ${s.cls}">
+        <div class="label">${s.label}</div>
+        <div class="value mono">${s.value}</div>
+        <div class="sub">${s.sub}</div>
+      </div>`).join('');
+  }catch(e){
+    console.error('[Dashboard] Failed to load stats:', e);
+  }
 }
 
 async function loadGroups(){
-  const res = await fetch('/api/groups');
-  groups = await res.json();
-  renderGroups();
+  try{
+    const res = await fetch('/api/groups');
+    const data = await res.json();
+    // Backend may return { error: "..." } on 503 instead of an array
+    if(Array.isArray(data)){
+      groups = data;
+    } else {
+      groups = [];
+    }
+    renderGroups();
+  }catch(e){
+    console.error('[Dashboard] Failed to load groups:', e);
+  }
 }
 
 function renderGroups(){
@@ -327,16 +346,16 @@ function renderGroups(){
     return;
   }
   list.innerHTML = groups.map(g => {
-    const flagged = g.label === 'DDoS';
+    const flagged = g.label !== 'BENIGN';
     return `
     <div class="source-row ${g.group_id===selectedGroup?'active':''}" data-id="${g.group_id}">
       <div class="sev" style="background:${flagged?'var(--attention)':'var(--muted-ok)'}"></div>
       <div class="who">
         <div class="primary">${g.host ? g.host : g.src_ip}</div>
-        <div class="secondary">${g.host ? g.src_ip + ' · ' : ''}last seen ${g.last_seen}</div>
+        <div class="secondary">${g.host ? g.src_ip + ' · ' : ''}last seen ${g.last_seen || '—'}</div>
       </div>
       <div class="count-badge">${g.request_count} req</div>
-      <div class="conf" style="color:${flagged?'var(--attention)':'var(--muted-ok)'}">${(g.confidence*100).toFixed(0)}%</div>
+      <div class="conf" style="color:${flagged?'var(--attention)':'var(--muted-ok)'}">${fmtConf(g.confidence)}</div>
     </div>`;
   }).join('');
   list.querySelectorAll('.source-row').forEach(row => {
@@ -360,7 +379,7 @@ async function selectGroup(id){
   const analysis = await analysisRes.json();
   const history = await historyRes.json();
 
-  renderLogs(logs);
+  renderLogs(Array.isArray(logs) ? logs : []);
   resetChat(analysis, history);
 
   const input = document.getElementById('chatInput');
@@ -376,16 +395,19 @@ function renderLogs(logs){
     body.innerHTML = '<div class="empty">No logged flows for this source.</div>';
     return;
   }
-  body.innerHTML = `<div class="log-list">${logs.map(l => `
+  body.innerHTML = `<div class="log-list">${logs.map(l => {
+    const flagged = l.label !== 'BENIGN';
+    return `
     <div class="log-row">
-      <span class="lbl ${l.label==='DDoS'?'ddos':'benign'}">${l.label}</span>
+      <span class="lbl ${flagged?'ddos':'benign'}">${l.label}</span>
       <div class="info">
-        <div class="path">${l.id} → ${l.dst_ip}:${l.dst_port}</div>
-        <div class="meta">${l.protocol} · ${l.packets_per_sec.toLocaleString()} pkt/s</div>
+        <div class="path">${l.id} → ${l.dst_ip}:${fmtPort(l.dst_port)}</div>
+        <div class="meta">${fmtProto(l.protocol)} · ${fmtPps(l.packets_per_sec)} pkt/s</div>
       </div>
-      <div class="conf">${(l.confidence*100).toFixed(0)}%</div>
-      <div class="time mono">${l.timestamp}</div>
-    </div>`).join('')}</div>`;
+      <div class="conf">${fmtConf(l.confidence)}</div>
+      <div class="time mono">${l.timestamp || '—'}</div>
+    </div>`;
+  }).join('')}</div>`;
 }
 
 // The Analysis bubble (rule-based verdict) is regenerated fresh every time —
@@ -411,8 +433,10 @@ function addChatRow(payload, isUser){
   row.className = 'chat-row ' + (isUser ? 'user' : 'bot');
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-  const verdictHtml = payload.verdict
-    ? `<div class="verdict ${payload.verdict==='DDoS'?'ddos':'benign'}">${payload.verdict}</div><br>`
+  const lbl = payload.verdict || '';
+  const isThreat = lbl && lbl !== 'BENIGN';
+  const verdictHtml = lbl
+    ? `<div class="verdict ${isThreat?'ddos':'benign'}">${lbl}</div><br>`
     : '';
   const bulletsHtml = (payload.bullets && payload.bullets.length)
     ? `<ul>${payload.bullets.map(b => `<li>${b}</li>`).join('')}</ul>` : '';
@@ -471,8 +495,29 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
   input.value = '';
 });
 
+/* --- initial load --- */
 loadStats();
 loadGroups();
+
+/* --- auto-refresh polling: update stats + groups every 5 seconds,
+       and refresh the selected source's logs silently (without
+       touching chat history or disrupting user interaction). --- */
+setInterval(async () => {
+  await loadStats();
+  await loadGroups();
+  // If a source is selected, silently refresh its log list
+  if(selectedGroup){
+    try{
+      const logsRes = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/logs`);
+      if(logsRes.ok){
+        const logs = await logsRes.json();
+        renderLogs(Array.isArray(logs) ? logs : []);
+      }
+    }catch(e){
+      // Silently ignore polling errors for selected-source log refresh
+    }
+  }
+}, 5000);
 </script>
 
 </body>
