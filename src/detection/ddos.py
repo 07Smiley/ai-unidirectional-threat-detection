@@ -14,12 +14,21 @@ def detect_ddos(
     - Traffic originating from multiple source IPs
     """
 
+    if flows is None:
+        raise ValueError("Flow data is required for DDoS detection.")
+
+    required_columns = ["id.resp_h", "id.orig_h"]
+    missing = [column for column in required_columns if column not in flows.columns]
+    if missing:
+        missing_str = ", ".join(missing)
+        raise ValueError(f"DDoS detection requires columns: {missing_str}")
+
+    if flows.empty:
+        return []
+
     results = []
 
     flows = flows.copy()
-
-    # Convert timestamp to numeric
-    flows["ts"] = pd.to_numeric(flows["ts"], errors="coerce")
 
     # Group traffic by destination
     grouped = flows.groupby("id.resp_h")

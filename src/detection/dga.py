@@ -1,9 +1,10 @@
 import math
-import re
 from collections import Counter
 from pathlib import Path
 
 import pandas as pd
+
+from src.ingest.pcap_reader import read_zeek_log
 
 
 def entropy(text):
@@ -65,39 +66,15 @@ def detect_dga(log_file):
     log_file = Path(log_file)
 
     if not log_file.exists():
-        print(f"DNS log not found: {log_file}")
+        raise FileNotFoundError(f"Could not read Zeek log: file not found: {log_file}")
+
+    df = read_zeek_log(log_file)
+
+    if df.empty:
         return []
-
-    # Zeek TSV files contain lines beginning with #
-    rows = []
-
-    with open(log_file, "r", errors="ignore") as f:
-        fields = None
-
-        for line in f:
-            line = line.rstrip()
-
-            if line.startswith("#fields"):
-                fields = line.split("\t")[1:]
-                continue
-
-            if line.startswith("#") or not line:
-                continue
-
-            if fields:
-                values = line.split("\t")
-
-                if len(values) == len(fields):
-                    rows.append(dict(zip(fields, values)))
-
-    if not rows:
-        return []
-
-    df = pd.DataFrame(rows)
 
     if "query" not in df.columns:
-        print("No DNS query field found.")
-        return []
+        raise ValueError("DGA detection requires the 'query' column.")
 
     alerts = []
 

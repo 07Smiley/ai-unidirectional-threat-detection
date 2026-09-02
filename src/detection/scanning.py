@@ -9,6 +9,18 @@ def detect_scanning(flows, min_unique_ports=5):
     using many different destination ports.
     """
 
+    if flows is None:
+        raise ValueError("Flow data is required for scanning detection.")
+
+    required_columns = ["id.orig_h", "id.resp_h", "id.resp_p"]
+    missing = [column for column in required_columns if column not in flows.columns]
+    if missing:
+        missing_str = ", ".join(missing)
+        raise ValueError(f"Scanning detection requires columns: {missing_str}")
+
+    if flows.empty:
+        return []
+
     results = []
 
     # Make sure port column is numeric

@@ -1,43 +1,28 @@
 from pathlib import Path
 import pandas as pd
 
+from src.ingest.pcap_reader import read_zeek_log
+
 
 def detect_exfiltration(log_file):
     log_file = Path(log_file)
 
     if not log_file.exists():
-        print(f"Log file not found: {log_file}")
+        raise FileNotFoundError(f"Could not read Zeek log: file not found: {log_file}")
+
+    df = read_zeek_log(log_file)
+
+    if df.empty:
         return []
-
-    fields = None
-    rows = []
-
-    with open(log_file, "r", errors="ignore") as f:
-        for line in f:
-            line = line.rstrip()
-
-            if line.startswith("#fields"):
-                fields = line.split("\t")[1:]
-                continue
-
-            if line.startswith("#") or not line:
-                continue
-
-            if fields:
-                values = line.split("\t")
-
-                if len(values) == len(fields):
-                    rows.append(dict(zip(fields, values)))
-
-    if not rows:
-        return []
-
-    df = pd.DataFrame(rows)
 
     # Convert byte fields to numbers
     for column in ["orig_bytes", "resp_bytes"]:
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
+        else:
+            raise ValueError(
+                f"Exfiltration detection requires the '{column}' column."
+            )
 
     alerts = []
 

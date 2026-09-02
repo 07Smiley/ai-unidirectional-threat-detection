@@ -5,7 +5,7 @@ def read_zeek_log(log_file):
     log_file = Path(log_file)
 
     if not log_file.exists():
-        return [], []
+        raise FileNotFoundError(f"Could not read Zeek log: file not found: {log_file}")
 
     fields = None
     rows = []
@@ -27,7 +27,10 @@ def read_zeek_log(log_file):
                 if len(values) == len(fields):
                     rows.append(dict(zip(fields, values)))
 
-    return fields or [], rows
+    if fields is None:
+        raise ValueError(f"Could not find #fields header in Zeek log: {log_file}")
+
+    return fields, rows
 
 
 def detect_encrypted_traffic(ssl_file, quic_file):

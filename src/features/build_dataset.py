@@ -31,11 +31,11 @@ def build_dataset():
         packets = rdpcap(str(pcap_path))
         flows = extract_flow_features(packets)
 
-        for flow in flows:
+        for flow in flows.to_dict("records"):
             rows.append({
-                "packet_count": flow["packet_count"],
+                "packet_count": flow["total_packets"],
                 "total_bytes": flow["total_bytes"],
-                "duration": flow["duration"],
+                "duration": flow["flow_duration"],
                 "packet_rate": flow["packet_rate"],
                 "average_packet_size": flow["average_packet_size"],
                 "label": label,
