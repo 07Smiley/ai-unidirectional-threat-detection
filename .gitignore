@@ -4,3 +4,5 @@ data/processed/features.csv
 data/processed/zeek/
 *.pcap
 *.pcapng
+
+.env
