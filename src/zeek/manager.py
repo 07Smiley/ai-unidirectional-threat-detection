@@ -97,6 +97,15 @@ class ZeekManager:
                     interfaces.append(name)
         return interfaces
 
+    def clear_logs(self) -> None:
+        """Remove logs from the dedicated live-capture directory."""
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        for path in self.log_dir.glob("*.log"):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
     def log_status(self) -> dict[str, bool]:
         return {name: (self.log_dir / name).exists() for name in LIVE_LOGS}
 
@@ -126,7 +135,7 @@ class ZeekManager:
         if self.process is not None and self.process.poll() is None:
             raise RuntimeError("Zeek is already running.")
 
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.clear_logs()
 
         command = [self.zeek_binary, "-i", interface, "-C", "local"]
         self.process = subprocess.Popen(
@@ -177,6 +186,7 @@ class ZeekManager:
 
         self.process = None
         self.interface = None
+        self.clear_logs()
         return self.status()
 
     def __enter__(self) -> "ZeekManager":
