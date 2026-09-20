@@ -6,11 +6,11 @@ import shutil
 import signal
 import subprocess
 import time
-from typing import Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = REPO_ROOT / "data" / "processed" / "zeek" / "live"
+LIVE_LOGS = ("conn.log", "dns.log", "ssl.log", "quic.log")
 
 
 @dataclass
@@ -21,6 +21,7 @@ class ZeekStatus:
     interface: str | None = None
     log_dir: str = str(DEFAULT_LOG_DIR)
     pid: int | None = None
+    logs: dict[str, bool] | None = None
     error: str | None = None
 
     def to_dict(self) -> dict:
@@ -28,12 +29,7 @@ class ZeekStatus:
 
 
 class ZeekManager:
-    """Manage a local Zeek sensor process for live network monitoring.
-
-    This class deliberately does not install packages or select an interface
-    silently. Installation and interface selection are application-level
-    decisions that can be added once the sensor lifecycle is verified.
-    """
+    """Manage a local Zeek sensor process for live network monitoring."""
 
     def __init__(self, log_dir: str | Path = DEFAULT_LOG_DIR, zeek_binary: str = "zeek") -> None:
         self.log_dir = Path(log_dir).resolve()
@@ -66,7 +62,6 @@ class ZeekManager:
         if interfaces_dir.exists():
             return sorted(p.name for p in interfaces_dir.iterdir() if p.is_dir())
 
-        # Fallback for systems without /sys/class/net.
         try:
             result = subprocess.run(
                 ["ip", "-o", "link", "show"],
@@ -87,6 +82,17 @@ class ZeekManager:
                     interfaces.append(name)
         return interfaces
 
+    def log_status(self) -> dict[str, bool]:
+        """Report whether expected Zeek logs exist and have received data."""
+        return {
+            name: (self.log_dir / name).exists()
+            for name in LIVE_LOGS
+        }
+
+    def has_live_log_data(self, log_name: str = "conn.log") -> bool:
+        path = self.log_dir / log_name
+        return path.exists() and path.stat().st_size > 0
+
     def status(self) -> ZeekStatus:
         running = self.process is not None and self.process.poll() is None
         return ZeekStatus(
@@ -96,9 +102,10 @@ class ZeekManager:
             interface=self.interface,
             log_dir=str(self.log_dir),
             pid=self.process.pid if running and self.process else None,
+            logs=self.log_status(),
         )
 
-    def start(self, interface: str) -> ZeekStatus:
+    def start(self, interface: str, startup_timeout: float = 5.0) -> ZeekStatus:
         if not self.is_installed():
             raise RuntimeError(
                 "Zeek is not installed. Install Zeek first; automatic package "
@@ -111,18 +118,7 @@ class ZeekManager:
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        # Zeek needs elevated capture privileges on most Linux systems.
-        # The caller should run the application with the required privileges
-        # (or configure the system's capture permissions) rather than having
-        # this library invoke sudo and prompt for a password.
-        command = [
-            self.zeek_binary,
-            "-i",
-            interface,
-            "-C",
-            "local",
-        ]
-
+        command = [self.zeek_binary, "-i", interface, "-C", "local"]
         self.process = subprocess.Popen(
             command,
             cwd=self.log_dir,
@@ -133,15 +129,30 @@ class ZeekManager:
         )
         self.interface = interface
 
-        # Give Zeek a short startup window and fail early if it exits.
-        time.sleep(1.0)
-        if self.process.poll() is not None:
-            error = self.process.stderr.read().strip() if self.process.stderr else ""
-            self.process = None
-            self.interface = None
-            raise RuntimeError(f"Zeek failed to start{': ' + error if error else '.'}")
+        deadline = time.monotonic() + startup_timeout
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                error = self.process.stderr.read().strip() if self.process.stderr else ""
+                self.process = None
+                self.interface = None
+                raise RuntimeError(f"Zeek failed to start{': ' + error if error else '.'}")
+            # Zeek may take a moment before creating its first logs.
+            if self.log_dir.exists():
+                break
+            time.sleep(0.1)
 
         return self.status()
+
+    def wait_for_log(self, log_name: str = "conn.log", timeout: float = 10.0) -> bool:
+        """Wait until Zeek creates a non-empty log file."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.has_live_log_data(log_name):
+                return True
+            if self.process is not None and self.process.poll() is not None:
+                return False
+            time.sleep(0.25)
+        return self.has_live_log_data(log_name)
 
     def stop(self, timeout: float = 5.0) -> ZeekStatus:
         if self.process is None:
@@ -175,6 +186,7 @@ def main() -> None:
     print(f"Zeek installed : {'YES' if status.installed else 'NO'}")
     print(f"Zeek version   : {status.version or 'N/A'}")
     print(f"Log directory  : {status.log_dir}")
+
     print("\nNetwork interfaces:")
     interfaces = manager.list_interfaces()
     if interfaces:
@@ -182,6 +194,11 @@ def main() -> None:
             print(f"  {index}. {interface}")
     else:
         print("  No interfaces detected")
+
+    if status.logs:
+        print("\nLive log files:")
+        for name, exists in status.logs.items():
+            print(f"  {name:<12} {'✓' if exists else '—'}")
 
 
 if __name__ == "__main__":
