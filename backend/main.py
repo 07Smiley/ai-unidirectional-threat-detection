@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
+from backend.live_service import LiveMonitoringService
 from backend.schemas import (
     HealthResponse,
     ThreatAnalysisRequest,
@@ -23,6 +26,10 @@ ALLOWED_ORIGINS = [
 ]
 
 
+class LiveStartRequest(BaseModel):
+    interface: str
+
+
 class WebSocketManager:
     def __init__(self) -> None:
         self.connections: list[WebSocket] = []
@@ -37,10 +44,10 @@ class WebSocketManager:
 
     async def broadcast(self, payload: dict[str, Any]) -> None:
         disconnected: list[WebSocket] = []
-        for websocket in self.connections:
+        for websocket in list(self.connections):
             try:
                 await websocket.send_json(payload)
-            except RuntimeError:
+            except (RuntimeError, WebSocketDisconnect):
                 disconnected.append(websocket)
 
         for websocket in disconnected:
@@ -49,15 +56,18 @@ class WebSocketManager:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    manager = WebSocketManager()
     app.state.detection_service = DetectionService()
     app.state.threat_store = ThreatAnalysisStore()
-    app.state.websocket_manager = WebSocketManager()
+    app.state.websocket_manager = manager
+    app.state.live_monitor = LiveMonitoringService(manager.broadcast)
     yield
+    app.state.live_monitor.stop()
 
 
 app = FastAPI(
     title="AI Unidirectional Threat Detection API",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -72,7 +82,7 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok")
+    return {"status": "ok"}
 
 
 @app.get("/api/threats", response_model=ThreatAnalysisResponse)
@@ -105,6 +115,27 @@ async def analyze_threats(
     return response
 
 
+@app.get("/api/live/status")
+def live_status() -> dict[str, Any]:
+    return app.state.live_monitor.status()
+
+
+@app.post("/api/live/start")
+def live_start(request: LiveStartRequest) -> dict[str, Any]:
+    try:
+        return app.state.live_monitor.start(
+            request.interface,
+            asyncio.get_running_loop(),
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/live/stop")
+def live_stop() -> dict[str, Any]:
+    return app.state.live_monitor.stop()
+
+
 @app.websocket("/ws/threats")
 async def threat_stream(websocket: WebSocket) -> None:
     manager: WebSocketManager = app.state.websocket_manager
@@ -117,10 +148,10 @@ async def threat_stream(websocket: WebSocket) -> None:
             {
                 "event": "connected",
                 "latest": snapshot.model_dump(),
+                "live": app.state.live_monitor.status(),
             }
         )
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-
