@@ -14,8 +14,8 @@ except ImportError:  # pragma: no cover - handled as a runtime dependency error
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_MODEL_PATHS = {
-    "ddos": REPO_ROOT / "ddos_detector.pkl",
-    "portscan": REPO_ROOT / "portscan_detector.pkl",
+    "ddos": REPO_ROOT / "src" / "models" / "ddos_detector.pkl",
+    "portscan": REPO_ROOT / "src" / "models" / "portscan_detector.pkl",
 }
 
 
