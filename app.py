@@ -16,6 +16,18 @@ BACKEND_HOST = os.environ.get("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = os.environ.get("BACKEND_PORT", "8000")
 DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
 DASHBOARD_PORT = os.environ.get("DASHBOARD_PORT", "9000")
+ZEEK_PATHS = ("/opt/zeek/bin/zeek", "/usr/local/bin/zeek", "/usr/bin/zeek")
+
+
+def find_zeek() -> str | None:
+    found = shutil.which("zeek")
+    if found:
+        return found
+    for candidate in ZEEK_PATHS:
+        path = Path(candidate)
+        if path.is_file() and path.stat().st_mode & 0o111:
+            return candidate
+    return None
 
 
 def start_process(command: list[str], name: str) -> subprocess.Popen:
@@ -27,8 +39,13 @@ def preflight() -> None:
     if sys.version_info < (3, 10):
         raise RuntimeError("Python 3.10 or newer is required.")
 
-    if shutil.which("zeek") is None:
-        raise RuntimeError("Zeek was not found in PATH. Install Zeek before launching.")
+    zeek = find_zeek()
+    if zeek is None:
+        raise RuntimeError(
+            "Zeek was not found. Check that the Zeek package is installed "
+            "and that /opt/zeek/bin/zeek exists."
+        )
+    print(f"[launcher] Zeek: {zeek}")
 
     if os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() != 0:
         print(
