@@ -967,4 +967,4 @@ if __name__ == "__main__":
     # other request on this process — cheap concurrency win for the dev
     # server. For real production traffic, run this behind gunicorn/uWSGI
     # with multiple workers instead of python app.py directly.
-    app.run(debug=True, port=9000, threaded=True)
+    app.run(\n        host=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),\n        port=int(os.environ.get("DASHBOARD_PORT", "9000")),\n        debug=os.environ.get("DASHBOARD_DEBUG", "0") == "1",\n        threaded=True,\n        use_reloader=False,\n    )
