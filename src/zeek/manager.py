@@ -11,6 +11,11 @@ import time
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = REPO_ROOT / "data" / "processed" / "zeek" / "live"
 LIVE_LOGS = ("conn.log", "dns.log", "ssl.log", "quic.log")
+COMMON_ZEEK_PATHS = (
+    "/opt/zeek/bin/zeek",
+    "/usr/local/bin/zeek",
+    "/usr/bin/zeek",
+)
 
 
 @dataclass
@@ -31,14 +36,24 @@ class ZeekStatus:
 class ZeekManager:
     """Manage a local Zeek sensor process for live network monitoring."""
 
-    def __init__(self, log_dir: str | Path = DEFAULT_LOG_DIR, zeek_binary: str = "zeek") -> None:
+    def __init__(self, log_dir: str | Path = DEFAULT_LOG_DIR, zeek_binary: str | None = None) -> None:
         self.log_dir = Path(log_dir).resolve()
-        self.zeek_binary = zeek_binary
+        self.zeek_binary = zeek_binary or self._find_zeek()
         self.process: subprocess.Popen[str] | None = None
         self.interface: str | None = None
 
+    @staticmethod
+    def _find_zeek() -> str:
+        found = shutil.which("zeek")
+        if found:
+            return found
+        for candidate in COMMON_ZEEK_PATHS:
+            if Path(candidate).is_file() and Path(candidate).stat().st_mode & 0o111:
+                return candidate
+        return "zeek"
+
     def is_installed(self) -> bool:
-        return shutil.which(self.zeek_binary) is not None
+        return Path(self.zeek_binary).is_file() or shutil.which(self.zeek_binary) is not None
 
     def version(self) -> str | None:
         if not self.is_installed():
@@ -83,11 +98,7 @@ class ZeekManager:
         return interfaces
 
     def log_status(self) -> dict[str, bool]:
-        """Report whether expected Zeek logs exist and have received data."""
-        return {
-            name: (self.log_dir / name).exists()
-            for name in LIVE_LOGS
-        }
+        return {name: (self.log_dir / name).exists() for name in LIVE_LOGS}
 
     def has_live_log_data(self, log_name: str = "conn.log") -> bool:
         path = self.log_dir / log_name
@@ -108,8 +119,7 @@ class ZeekManager:
     def start(self, interface: str, startup_timeout: float = 5.0) -> ZeekStatus:
         if not self.is_installed():
             raise RuntimeError(
-                "Zeek is not installed. Install Zeek first; automatic package "
-                "installation will be added in a later deployment step."
+                "Zeek is not installed or its binary could not be located."
             )
         if interface not in self.list_interfaces():
             raise ValueError(f"Network interface not found: {interface}")
@@ -136,7 +146,6 @@ class ZeekManager:
                 self.process = None
                 self.interface = None
                 raise RuntimeError(f"Zeek failed to start{': ' + error if error else '.'}")
-            # Zeek may take a moment before creating its first logs.
             if self.log_dir.exists():
                 break
             time.sleep(0.1)
@@ -144,7 +153,6 @@ class ZeekManager:
         return self.status()
 
     def wait_for_log(self, log_name: str = "conn.log", timeout: float = 10.0) -> bool:
-        """Wait until Zeek creates a non-empty log file."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.has_live_log_data(log_name):
@@ -184,6 +192,7 @@ def main() -> None:
 
     print("=== Zeek Sensor ===")
     print(f"Zeek installed : {'YES' if status.installed else 'NO'}")
+    print(f"Zeek binary    : {manager.zeek_binary}")
     print(f"Zeek version   : {status.version or 'N/A'}")
     print(f"Log directory  : {status.log_dir}")
 
