@@ -112,8 +112,11 @@ class LiveZeekReader:
         callback: Callable,
         stop_event=None,
     ) -> None:
-        """Follow the log and call callback(batch) for every new batch."""
-        for batch in self.follow():
-            if stop_event is not None and stop_event.is_set():
-                break
-            callback(batch)
+        """Follow the log and call callback(batch) until stopped."""
+        self.initialize()
+        while stop_event is None or not stop_event.is_set():
+            batch = self.read_new()
+            if batch is not None and not batch.empty:
+                callback(batch)
+            else:
+                time.sleep(self.poll_interval)
