@@ -21,6 +21,7 @@ class LiveMonitoringService:
     ) -> None:
         self.broadcast = broadcast
         self.zeek = ZeekManager(log_dir=log_dir)
+        self.zeek.clear_logs()
         self.pipeline = LiveDetectionPipeline(callback=self._on_event)
         self.reader: LiveZeekReader | None = None
         self.stop_event = threading.Event()
