@@ -7,12 +7,16 @@ import signal
 import subprocess
 import time
 
+from src.zeek.installer import ZeekInstaller
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = REPO_ROOT / "data" / "processed" / "zeek" / "live"
 LIVE_LOGS = ("conn.log", "dns.log", "ssl.log", "quic.log")
 COMMON_ZEEK_PATHS = (
     "/opt/zeek/bin/zeek",
+    "/opt/zeek/bin/zeek.exe",
+    "/opt/homebrew/bin/zeek",
     "/usr/local/bin/zeek",
     "/usr/bin/zeek",
 )
@@ -36,11 +40,18 @@ class ZeekStatus:
 class ZeekManager:
     """Manage a local Zeek sensor process for live network monitoring."""
 
-    def __init__(self, log_dir: str | Path = DEFAULT_LOG_DIR, zeek_binary: str | None = None) -> None:
+    def __init__(
+        self,
+        log_dir: str | Path = DEFAULT_LOG_DIR,
+        zeek_binary: str | None = None,
+        auto_install: bool = True,
+    ) -> None:
         self.log_dir = Path(log_dir).resolve()
+        self.auto_install = auto_install
         self.zeek_binary = zeek_binary or self._find_zeek()
         self.process: subprocess.Popen[str] | None = None
         self.interface: str | None = None
+        self.install_message: str | None = None
 
     @staticmethod
     def _find_zeek() -> str:
@@ -48,12 +59,25 @@ class ZeekManager:
         if found:
             return found
         for candidate in COMMON_ZEEK_PATHS:
-            if Path(candidate).is_file() and Path(candidate).stat().st_mode & 0o111:
+            path = Path(candidate)
+            if path.is_file() and path.stat().st_mode & 0o111:
                 return candidate
         return "zeek"
 
     def is_installed(self) -> bool:
         return Path(self.zeek_binary).is_file() or shutil.which(self.zeek_binary) is not None
+
+    def ensure_installed(self) -> bool:
+        if self.is_installed():
+            return True
+
+        result = ZeekInstaller().ensure(auto_install=self.auto_install)
+        self.install_message = result.message
+        if not result.installed:
+            return False
+
+        self.zeek_binary = self._find_zeek()
+        return self.is_installed()
 
     def version(self) -> str | None:
         if not self.is_installed():
@@ -76,6 +100,15 @@ class ZeekManager:
         interfaces_dir = Path("/sys/class/net")
         if interfaces_dir.exists():
             return sorted(p.name for p in interfaces_dir.iterdir() if p.is_dir())
+
+        try:
+            import socket
+
+            names = [name for _, name in socket.if_nameindex()]
+            if names:
+                return sorted(dict.fromkeys(names))
+        except (AttributeError, OSError):
+            pass
 
         try:
             result = subprocess.run(
@@ -115,6 +148,7 @@ class ZeekManager:
 
     def status(self) -> ZeekStatus:
         running = self.process is not None and self.process.poll() is None
+        error = self.install_message if not self.is_installed() else None
         return ZeekStatus(
             installed=self.is_installed(),
             version=self.version(),
@@ -123,12 +157,14 @@ class ZeekManager:
             log_dir=str(self.log_dir),
             pid=self.process.pid if running and self.process else None,
             logs=self.log_status(),
+            error=error,
         )
 
     def start(self, interface: str, startup_timeout: float = 5.0) -> ZeekStatus:
-        if not self.is_installed():
+        if not self.ensure_installed():
             raise RuntimeError(
-                "Zeek is not installed or its binary could not be located."
+                "Zeek is not installed and automatic installation failed: "
+                f"{self.install_message or 'unknown installation error'}"
             )
         if interface not in self.list_interfaces():
             raise ValueError(f"Network interface not found: {interface}")
@@ -137,7 +173,14 @@ class ZeekManager:
 
         self.clear_logs()
 
-        command = [self.zeek_binary, "-i", interface, "-C", "local", "Log::default_rotation_interval=0sec"]
+        command = [
+            self.zeek_binary,
+            "-i",
+            interface,
+            "-C",
+            "local",
+            "Log::default_rotation_interval=0sec",
+        ]
         self.process = subprocess.Popen(
             command,
             cwd=self.log_dir,
