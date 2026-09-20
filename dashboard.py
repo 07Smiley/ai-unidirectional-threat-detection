@@ -295,8 +295,6 @@ _REPO_ROOT = Path(__file__).resolve().parent
 _ZEEK_LOG_DIR_CANDIDATES = [
     os.environ.get("ZEEK_LOG_DIR", ""),
     str(_REPO_ROOT / "data" / "processed" / "zeek" / "live"),
-    str(_REPO_ROOT / "data" / "processed" / "zeek"),
-    str(_REPO_ROOT),
 ]
 
 # Cache TTL in seconds — how often to re-check Zeek logs for new data.
