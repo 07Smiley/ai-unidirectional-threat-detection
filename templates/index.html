@@ -312,6 +312,10 @@ async function loadLiveStatus(){
     document.getElementById('liveStart').disabled=running;
     document.getElementById('liveStop').disabled=!running;
     if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
+    const loaded=(s.models&&s.models.loaded_models)||[];
+    const unavailable=(s.models&&s.models.unavailable_models)||{};
+    document.getElementById('modelBadge').textContent =
+      loaded.length ? 'LIVE · '+loaded.join(' + ') : 'RULES ONLY';
     if(running) connectLiveSocket();
     return s;
   }catch(e){
@@ -322,10 +326,9 @@ async function loadLiveStatus(){
 async function loadInterfaces(){
   try{
     const s=await (await fetch(LIVE_API+'/api/live/status')).json();
-    const zeek=s.zeek||{};
     const select=document.getElementById('interfaceSelect');
     const current=select.value;
-    const interfaces=(zeek.interfaces||[]);
+    const interfaces=(s.interfaces||[]);
     if(!interfaces.length){
       // Zeek status doesn't expose interfaces yet; use common Linux names.
       ['wlan0','eth0','enp0s3'].forEach(i=>{ if(![...select.options].some(o=>o.value===i)){const o=document.createElement('option');o.value=i;o.textContent=i;select.appendChild(o)}});
@@ -402,7 +405,7 @@ async function loadStats(){
       {label:'Flows analyzed', value:total.toLocaleString(), sub:s.flows_analyzed_window || '—', cls:''},
       {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flows, ' + flagPct + '% of total', cls:'flag'},
       {label:'Avg confidence', value:fmtConf(s.avg_confidence), sub:'on flagged flows', cls:'ok'},
-      {label:'Active model', value:s.model || '—', sub:'rule-based detection', cls:''}
+      {label:'Active model', value:s.model || '—', sub:'live detection pipeline', cls:''}
     ];
     document.getElementById('statStrip').innerHTML = strip.map(s => `
       <div class="stat ${s.cls}">
