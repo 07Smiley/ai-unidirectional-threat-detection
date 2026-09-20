@@ -121,7 +121,7 @@ def live_status() -> dict[str, Any]:
 
 
 @app.post("/api/live/start")
-def live_start(request: LiveStartRequest) -> dict[str, Any]:
+async def live_start(request: LiveStartRequest) -> dict[str, Any]:
     try:
         return app.state.live_monitor.start(
             request.interface,
