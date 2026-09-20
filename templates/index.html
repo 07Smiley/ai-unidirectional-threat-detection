@@ -73,6 +73,13 @@
     font-size:12px; color:var(--on-primary-mute); margin-top:4px;
     text-transform:uppercase; letter-spacing:0.96px; line-height:2.0;
   }
+  .live-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .live-select,.live-btn{background:transparent;color:var(--on-primary);border:1px solid var(--hairline-on-dark);border-radius:var(--rounded-pill);padding:8px 12px;font:700 11px 'D-DIN',Arial,sans-serif;text-transform:uppercase;letter-spacing:.6px}
+  .live-select{max-width:130px}
+  .live-btn{cursor:pointer;background:var(--on-primary);color:var(--ink);border-color:var(--on-primary)}
+  .live-btn.secondary{background:transparent;color:var(--on-primary)}
+  .live-btn:disabled{opacity:.35;cursor:not-allowed}
+  .live-status{font-size:10px;font-weight:700;letter-spacing:.7px;border:1px solid var(--hairline-on-dark);border-radius:var(--rounded-pill);padding:7px 10px}
   .model-badge{
     font-family:'D-DIN', Arial, Verdana, sans-serif;
     font-size:13.008px; font-weight:700; letter-spacing:1.17px;
@@ -223,6 +230,12 @@
     </div>
   </div>
   <span class="model-badge" id="modelBadge">—</span>
+  <div class="live-controls">
+    <select id="interfaceSelect" class="live-select"><option value="">Interface…</option></select>
+    <button id="liveStart" class="live-btn">Start live</button>
+    <button id="liveStop" class="live-btn secondary" disabled>Stop</button>
+    <span id="liveStatus" class="live-status">OFFLINE</span>
+  </div>
 </header>
 
 <div class="shell">
@@ -285,6 +298,86 @@
 
    Data now comes from the real Zeek + rule-based detection pipeline.
    ============================================================ */
+
+const LIVE_API = 'http://127.0.0.1:8000';
+let liveSocket = null;
+let liveThreats = 0;
+
+async function loadLiveStatus(){
+  try{
+    const res=await fetch(LIVE_API+'/api/live/status');
+    const s=await res.json();
+    const running=!!s.running;
+    document.getElementById('liveStatus').textContent=running?'LIVE':'OFFLINE';
+    document.getElementById('liveStart').disabled=running;
+    document.getElementById('liveStop').disabled=!running;
+    if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
+    if(running) connectLiveSocket();
+    return s;
+  }catch(e){
+    document.getElementById('liveStatus').textContent='API OFFLINE';
+  }
+}
+
+async function loadInterfaces(){
+  try{
+    const s=await (await fetch(LIVE_API+'/api/live/status')).json();
+    const zeek=s.zeek||{};
+    const select=document.getElementById('interfaceSelect');
+    const current=select.value;
+    const interfaces=(zeek.interfaces||[]);
+    if(!interfaces.length){
+      // Zeek status doesn't expose interfaces yet; use common Linux names.
+      ['wlan0','eth0','enp0s3'].forEach(i=>{ if(![...select.options].some(o=>o.value===i)){const o=document.createElement('option');o.value=i;o.textContent=i;select.appendChild(o)}});
+    }
+    if(current) select.value=current;
+  }catch(e){}
+}
+
+function connectLiveSocket(){
+  if(liveSocket && (liveSocket.readyState===WebSocket.OPEN || liveSocket.readyState===WebSocket.CONNECTING)) return;
+  liveSocket=new WebSocket('ws://127.0.0.1:8000/ws/threats');
+  liveSocket.onmessage=(event)=>{
+    try{
+      const data=JSON.parse(event.data);
+      if(data.event==='live_threat'){
+        liveThreats++;
+        const badge=document.getElementById('sourceCount');
+        badge.textContent=badge.textContent.split(' ·')[0]+' · '+liveThreats+' live';
+        loadStats(); loadGroups();
+      }
+      if(data.event==='connected' && data.live){
+        const running=!!data.live.running;
+        document.getElementById('liveStatus').textContent=running?'LIVE':'OFFLINE';
+      }
+    }catch(e){}
+  };
+  liveSocket.onclose=()=>{liveSocket=null};
+}
+
+async function startLive(){
+  const iface=document.getElementById('interfaceSelect').value;
+  if(!iface){alert('Select a network interface first.');return}
+  try{
+    const res=await fetch(LIVE_API+'/api/live/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interface:iface})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.detail||'Unable to start live monitoring');
+    document.getElementById('liveStatus').textContent='LIVE';
+    connectLiveSocket();
+    loadStats(); loadGroups();
+  }catch(e){alert(e.message)}
+}
+
+async function stopLive(){
+  try{
+    await fetch(LIVE_API+'/api/live/stop',{method:'POST'});
+    document.getElementById('liveStatus').textContent='OFFLINE';
+    loadStats(); loadGroups();
+  }catch(e){alert('Unable to stop live monitoring.')}
+}
+
+document.getElementById('liveStart').addEventListener('click',startLive);
+document.getElementById('liveStop').addEventListener('click',stopLive);
 
 let selectedGroup = null;
 let groups = [];
@@ -496,6 +589,8 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
 });
 
 /* --- initial load --- */
+loadInterfaces();
+loadLiveStatus();
 loadStats();
 loadGroups();
 
