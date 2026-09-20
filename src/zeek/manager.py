@@ -137,7 +137,7 @@ class ZeekManager:
 
         self.clear_logs()
 
-        command = [self.zeek_binary, "-i", interface, "-C", "local"]
+        command = [self.zeek_binary, "-i", interface, "-C", "local", "Log::default_rotation_interval=0sec"]
         self.process = subprocess.Popen(
             command,
             cwd=self.log_dir,
