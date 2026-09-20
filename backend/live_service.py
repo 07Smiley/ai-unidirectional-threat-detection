@@ -68,7 +68,7 @@ class LiveMonitoringService:
         self.error = None
         self.reader = LiveZeekReader(
             self.zeek.log_dir / "conn.log",
-            start_at_end=True,
+            start_at_end=False,
         )
         self.worker = threading.Thread(
             target=self._run_reader,
