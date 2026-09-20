@@ -24,3 +24,6 @@ urllib3==2.7.0
 pytest
 fastapi
 uvicorn
+Flask
+python-dotenv
+google-genai
