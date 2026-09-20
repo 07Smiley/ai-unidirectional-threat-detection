@@ -94,6 +94,7 @@ class LiveMonitoringService:
         return {
             "running": bool(self.worker and self.worker.is_alive()),
             "interface": zeek_status.get("interface"),
+            "interfaces": self.zeek.list_interfaces(),
             "zeek": zeek_status,
             "models": self.pipeline.model_status,
             "error": self.error,
