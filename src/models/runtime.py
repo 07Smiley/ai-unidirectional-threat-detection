@@ -5,6 +5,20 @@ from typing import Any
 
 import pandas as pd
 
+from src.features.flow_features import FLOW_COLUMNS
+
+
+LIVE_FEATURE_COLUMNS = set(FLOW_COLUMNS) | {
+    "flow_duration",
+    "total_packets",
+    "total_bytes",
+    "packet_rate",
+    "byte_rate",
+    "average_packet_size",
+    "byte_ratio",
+    "packet_ratio",
+}
+
 try:
     import joblib
 except ImportError:  # pragma: no cover - handled as a runtime dependency error
@@ -46,6 +60,13 @@ class RuntimeModel:
 
         self.model = artifact["model"]
         self.features = list(artifact.get("features", []))
+        unsupported = sorted(set(self.features) - LIVE_FEATURE_COLUMNS)
+        if unsupported:
+            raise ModelNotAvailableError(
+                f"Model {self.path.name} expects features not produced by the live "
+                f"Zeek pipeline: {', '.join(unsupported[:8])}"
+                + (" ..." if len(unsupported) > 8 else "")
+            )
 
     @property
     def name(self) -> str:
