@@ -21,14 +21,21 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+MODEL_DIR = REPO_ROOT / "src" / "models" / "pkl"
+
+# Prefer direction-agnostic artifacts once trained. Legacy artifacts remain
+# the compatibility fallback until local CICIDS data is processed.
+MODEL_NAMES = (
+    "bot", "ddos", "dos", "infiltration", "patator", "portscan", "webattack",
+)
+
 DEFAULT_MODEL_PATHS = {
-    "bot": REPO_ROOT / "src" / "models" / "pkl" / "bot_detector.pkl",
-    "ddos": REPO_ROOT / "src" / "models" / "pkl" / "ddos_detector.pkl",
-    "dos": REPO_ROOT / "src" / "models" / "pkl" / "dos_detector.pkl",
-    "infiltration": REPO_ROOT / "src" / "models" / "pkl" / "infiltration_detector.pkl",
-    "patator": REPO_ROOT / "src" / "models" / "pkl" / "patator_detector.pkl",
-    "portscan": REPO_ROOT / "src" / "models" / "pkl" / "portscan_detector.pkl",
-    "webattack": REPO_ROOT / "src" / "models" / "pkl" / "webattack_detector.pkl",
+    name: (
+        MODEL_DIR / f"{name}_unidirectional.pkl"
+        if (MODEL_DIR / f"{name}_unidirectional.pkl").exists()
+        else MODEL_DIR / f"{name}_detector.pkl"
+    )
+    for name in MODEL_NAMES
 }
 
 
