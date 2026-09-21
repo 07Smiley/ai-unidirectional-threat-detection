@@ -32,6 +32,11 @@ class LiveStartRequest(BaseModel):
     interface: str
 
 
+class ResponseRequest(BaseModel):
+    action: str
+    ip: str
+
+
 class WebSocketManager:
     def __init__(self) -> None:
         self.connections: list[WebSocket] = []
@@ -130,6 +135,14 @@ async def live_start(request: LiveStartRequest) -> dict[str, Any]:
             asyncio.get_running_loop(),
         )
     except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/live/response")
+def live_response(request: ResponseRequest) -> dict[str, Any]:
+    try:
+        return app.state.live_monitor.confirm_response(request.action, request.ip)
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
