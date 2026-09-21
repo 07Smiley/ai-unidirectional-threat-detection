@@ -6,7 +6,10 @@ import threading
 from typing import Any, Awaitable, Callable
 import uuid
 
+import pandas as pd
+
 from src.detection.live_pipeline import LiveDetectionPipeline
+from src.ingest.live_packet_capture import LivePacketCapture
 from src.ingest.live_zeek_reader import LiveZeekReader
 from src.zeek.manager import DEFAULT_LOG_DIR, ZeekManager
 
@@ -24,6 +27,7 @@ class LiveMonitoringService:
         self.zeek.clear_logs()
         self.pipeline = LiveDetectionPipeline(callback=self._on_event)
         self.reader: LiveZeekReader | None = None
+        self.packet_capture: LivePacketCapture | None = None
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -47,6 +51,15 @@ class LiveMonitoringService:
         # silently terminate the monitoring worker.
         future.add_done_callback(lambda task: task.exception())
 
+    def _on_packet_flows(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        features = pd.DataFrame(rows)
+        try:
+            self.pipeline.process_packet_features(features)
+        except Exception as exc:
+            self.error = str(exc)
+
     def _run_reader(self) -> None:
         assert self.reader is not None
         try:
@@ -66,6 +79,17 @@ class LiveMonitoringService:
         self.loop = loop
         self.stop_event.clear()
         self.error = None
+        self.packet_capture = LivePacketCapture(
+            interface=interface,
+            callback=self._on_packet_flows,
+        )
+        try:
+            self.packet_capture.start()
+        except Exception:
+            self.packet_capture = None
+            self.zeek.stop()
+            raise
+
         self.reader = LiveZeekReader(
             self.zeek.log_dir / "conn.log",
             start_at_end=False,
@@ -81,6 +105,13 @@ class LiveMonitoringService:
 
     def stop(self) -> dict[str, Any]:
         self.stop_event.set()
+
+        if self.packet_capture is not None:
+            try:
+                self.packet_capture.stop()
+            except Exception as exc:
+                self.error = str(exc)
+            self.packet_capture = None
 
         if self.worker is not None and self.worker.is_alive():
             self.worker.join(timeout=3)
@@ -98,5 +129,9 @@ class LiveMonitoringService:
             "interfaces": self.zeek.list_interfaces(),
             "zeek": zeek_status,
             "models": self.pipeline.model_status,
+            "packet_capture": {
+                "running": bool(self.packet_capture and self.packet_capture.running),
+                "error": self.packet_capture.error if self.packet_capture else None,
+            },
             "error": self.error,
         }
