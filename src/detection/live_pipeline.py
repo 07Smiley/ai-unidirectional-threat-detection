@@ -7,6 +7,7 @@ import pandas as pd
 from src.detection.live_detector import LiveThreatDetector
 from src.features.live_flow_processor import LiveFlowProcessor
 from src.models.runtime import RuntimeModelRegistry
+from src.detection.threat_score import calculate_threat_score, response_offer
 
 
 class LiveDetectionPipeline:
@@ -58,6 +59,16 @@ class LiveDetectionPipeline:
                     **event,
                 }
             )
+
+        score = calculate_threat_score(ml_events)
+        self._emit(
+            {
+                "source": "scoring",
+                "type": "threat_score",
+                "score": score,
+                "response_available": response_offer(score),
+            }
+        )
 
     @property
     def model_status(self) -> dict:
