@@ -303,6 +303,9 @@ const LIVE_API = 'http://127.0.0.1:8000';
 let liveSocket = null;
 let liveThreats = 0;
 let liveModelLabel = 'OFFLINE';
+let latestThreatScore = 0;
+let latestMlPrediction = null;
+let lastPromptedScore = null;
 
 async function loadLiveStatus(){
   try{
@@ -315,6 +318,9 @@ async function loadLiveStatus(){
     if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
     const loaded=(s.models&&s.models.loaded_models)||[];
     const unavailable=(s.models&&s.models.unavailable_models)||{};
+    const latest=(s.latest_ml)||{};
+    latestThreatScore=Number(latest.score||0);
+    latestMlPrediction=latest.prediction||null;
     liveModelLabel = loaded.length ? 'LIVE · '+loaded.join(' + ') : 'RULES ONLY';
     document.getElementById('modelBadge').textContent = liveModelLabel;
     if(running) connectLiveSocket();
@@ -348,6 +354,17 @@ function connectLiveSocket(){
     try{
       const data=JSON.parse(event.data);
       if(data.event==='live_threat'){
+        if(data.type==='threat_score'){
+          latestThreatScore=Number(data.score||0);
+          if(data.response_available && latestThreatScore!==lastPromptedScore){
+            lastPromptedScore=latestThreatScore;
+            promptForResponse();
+          }
+          loadStats();
+        }
+        if(data.type==='ml_prediction' && String(data.label||'').toLowerCase()!=='benign'){
+          latestMlPrediction=data;
+        }
         liveThreats++;
         const badge=document.getElementById('sourceCount');
         badge.textContent=badge.textContent.split(' ·')[0]+' · '+liveThreats+' live';
@@ -373,6 +390,29 @@ async function startLive(){
     connectLiveSocket();
     loadStats(); loadGroups();
   }catch(e){alert(e.message)}
+}
+
+async function promptForResponse(){
+  if(!latestMlPrediction || !latestMlPrediction.src_ip) return;
+  const score=latestThreatScore.toFixed(2);
+  const label=latestMlPrediction.label || 'THREAT';
+  const ip=latestMlPrediction.src_ip;
+  const ok=window.confirm(
+    'THREAT SCORE '+score+'\\n\\n'+label+' detected from '+ip+'.\\n\\nBlock this source IP on this host?'
+  );
+  if(!ok) return;
+  try{
+    const res=await fetch(LIVE_API+'/api/live/response',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'block',ip})
+    });
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.detail||'Firewall action failed');
+    window.alert('Source IP '+ip+' was blocked.');
+  }catch(e){
+    window.alert('Response failed: '+e.message);
+  }
 }
 
 async function stopLive(){
@@ -408,6 +448,7 @@ async function loadStats(){
       {label:'Flows analyzed', value:total.toLocaleString(), sub:s.flows_analyzed_window || '—', cls:''},
       {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flows, ' + flagPct + '% of total', cls:'flag'},
       {label:'Avg confidence', value:fmtConf(s.avg_confidence), sub:'on flagged flows', cls:'ok'},
+      {label:'Live threat score', value:latestThreatScore.toFixed(2), sub:latestMlPrediction ? (latestMlPrediction.label+' · '+fmtConf(latestMlPrediction.confidence)) : 'waiting for ML inference', cls:latestThreatScore >= 75 ? 'flag' : ''},
       {label:'Active model', value:liveModelLabel, sub:'live detection pipeline', cls:''}
     ];
     document.getElementById('statStrip').innerHTML = strip.map(s => `
