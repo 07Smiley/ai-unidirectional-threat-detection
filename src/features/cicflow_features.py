@@ -213,6 +213,12 @@ class CICFlowExtractor:
     def rows(self) -> list[dict[str, Any]]:
         return [self._row(state) for state in self._flows.values()]
 
+    def flush(self) -> list[dict[str, Any]]:
+        """Emit and clear every currently tracked flow."""
+        rows = self.rows()
+        self._flows.clear()
+        return rows
+
     def pop_completed(self, idle_timeout: float, now: float | None = None) -> list[dict[str, Any]]:
         if now is None:
             import time
