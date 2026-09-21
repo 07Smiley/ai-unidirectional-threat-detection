@@ -12,6 +12,8 @@ from src.detection.live_pipeline import LiveDetectionPipeline
 from src.ingest.live_packet_capture import LivePacketCapture
 from src.ingest.live_zeek_reader import LiveZeekReader
 from src.zeek.manager import DEFAULT_LOG_DIR, ZeekManager
+from src.response.firewall import FirewallActionError, HostFirewall
+from src.response.policy import ThreatResponsePolicy
 
 
 class LiveMonitoringService:
@@ -32,6 +34,8 @@ class LiveMonitoringService:
         self.worker: threading.Thread | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.error: str | None = None
+        self.response_policy = ThreatResponsePolicy()
+        self.firewall = HostFirewall()
         self.latest_ml: dict[str, Any] = {
             "score": 0.0,
             "response_available": False,
@@ -39,6 +43,25 @@ class LiveMonitoringService:
             "source_ip": None,
             "destination_ip": None,
         }
+
+    def confirm_response(self, action: str, ip: str) -> dict[str, Any]:
+        """Apply a firewall action only after an explicit API confirmation."""
+        if action not in {"block", "unblock"}:
+            raise ValueError("Action must be 'block' or 'unblock'.")
+
+        if action == "block":
+            score = float(self.latest_ml.get("score", 0.0))
+            source_ip = self.latest_ml.get("source_ip")
+            if not self.response_policy.requires_user_confirmation(score / 100.0):
+                raise ValueError("Current threat score is below the response threshold.")
+            if not source_ip or ip != source_ip:
+                raise ValueError("IP does not match the latest confirmed threat source.")
+
+        try:
+            result = self.firewall.block(ip) if action == "block" else self.firewall.unblock(ip)
+        except FirewallActionError:
+            raise
+        return result
 
     def _on_event(self, event: dict[str, Any]) -> None:
         if event.get("type") == "ml_prediction":
@@ -159,6 +182,10 @@ class LiveMonitoringService:
             "zeek": zeek_status,
             "models": self.pipeline.model_status,
             "latest_ml": self.latest_ml,
+            "response_policy": {
+                "threshold": self.response_policy.threshold,
+                "confirmation_required": self.response_policy.ask_before_block,
+            },
             "packet_capture": {
                 "running": bool(self.packet_capture and self.packet_capture.running),
                 "error": self.packet_capture.error if self.packet_capture else None,
