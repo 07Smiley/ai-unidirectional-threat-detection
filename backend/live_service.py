@@ -32,8 +32,30 @@ class LiveMonitoringService:
         self.worker: threading.Thread | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.error: str | None = None
+        self.latest_ml: dict[str, Any] = {
+            "score": 0.0,
+            "response_available": False,
+            "prediction": None,
+            "source_ip": None,
+            "destination_ip": None,
+        }
 
     def _on_event(self, event: dict[str, Any]) -> None:
+        if event.get("type") == "ml_prediction":
+            label = str(event.get("label", ""))
+            if label.lower() not in {"benign", "normal"}:
+                self.latest_ml["prediction"] = {
+                    "model": event.get("model"),
+                    "label": label,
+                    "confidence": event.get("confidence"),
+                    "probabilities": event.get("probabilities", {}),
+                }
+                self.latest_ml["source_ip"] = event.get("src_ip")
+                self.latest_ml["destination_ip"] = event.get("dst_ip")
+        elif event.get("type") == "threat_score":
+            self.latest_ml["score"] = float(event.get("score", 0.0))
+            self.latest_ml["response_available"] = bool(event.get("response_available", False))
+
         payload = {
             "event": "live_threat",
             "id": uuid.uuid4().hex[:16],
@@ -79,6 +101,13 @@ class LiveMonitoringService:
         self.loop = loop
         self.stop_event.clear()
         self.error = None
+        self.latest_ml = {
+            "score": 0.0,
+            "response_available": False,
+            "prediction": None,
+            "source_ip": None,
+            "destination_ip": None,
+        }
         self.packet_capture = LivePacketCapture(
             interface=interface,
             callback=self._on_packet_flows,
@@ -129,6 +158,7 @@ class LiveMonitoringService:
             "interfaces": self.zeek.list_interfaces(),
             "zeek": zeek_status,
             "models": self.pipeline.model_status,
+            "latest_ml": self.latest_ml,
             "packet_capture": {
                 "running": bool(self.packet_capture and self.packet_capture.running),
                 "error": self.packet_capture.error if self.packet_capture else None,
