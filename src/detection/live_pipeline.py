@@ -50,12 +50,22 @@ class LiveDetectionPipeline:
     def _emit_ml_predictions(self, features: pd.DataFrame) -> list[dict]:
         """Run all loaded models and preserve the row each prediction belongs to."""
         raw = self.models.predict(features)
-        model_names = list(self.models.models)
+        model_names = list(getattr(self.models, "models", {}))
         rows_per_model = len(features)
         events = []
-        offset = 0
 
-        for model_name in model_names:
+        if not model_names:
+            # Test doubles and alternate registries may return one prediction
+            # per row without exposing their internal model collection.
+            for row_index, event in enumerate(raw[:rows_per_model]):
+                item = dict(event)
+                item["flow_index"] = row_index
+                item.update(self._metadata(features.iloc[row_index]))
+                events.append(item)
+            return events
+
+        offset = 0
+        for _model_name in model_names:
             for row_index in range(rows_per_model):
                 if offset + row_index >= len(raw):
                     break
