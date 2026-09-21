@@ -5,10 +5,11 @@ from typing import Any
 
 import pandas as pd
 
+from src.features.cicflow_features import CICFLOW_FEATURES
 from src.features.flow_features import FLOW_COLUMNS
 
 
-LIVE_FEATURE_COLUMNS = set(FLOW_COLUMNS) | {
+LIVE_FEATURE_COLUMNS = set(FLOW_COLUMNS) | set(CICFLOW_FEATURES) | {
     "flow_duration",
     "total_packets",
     "total_bytes",
@@ -123,7 +124,7 @@ class RuntimeModel:
 
 
 class RuntimeModelRegistry:
-    """Manage optional DDoS and port-scan model artifacts."""
+    """Manage the trained detector artifacts available to the live pipeline."""
 
     def __init__(self, model_paths: dict[str, str | Path] | None = None) -> None:
         paths = dict(DEFAULT_MODEL_PATHS)
