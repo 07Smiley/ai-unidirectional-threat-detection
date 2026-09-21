@@ -12,6 +12,7 @@ data/processed/zeek/
 *.db-shm
 *.sqlite
 *.sqlite3
+response_actions.jsonl
 chat_history.db
 
 # ---- Secrets / env ----
