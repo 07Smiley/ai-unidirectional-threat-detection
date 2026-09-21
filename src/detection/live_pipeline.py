@@ -63,6 +63,37 @@ class LiveDetectionPipeline:
     def model_status(self) -> dict:
         return self.models.status()
 
+    def process_packet_features(self, features: pd.DataFrame) -> None:
+        """Run packet-derived CICFlow features through the trained ML models."""
+        if features is None or features.empty:
+            return
+
+        try:
+            ml_events = self.models.predict(features)
+        except (ValueError, RuntimeError) as exc:
+            self._emit(
+                {
+                    "source": "ml",
+                    "type": "ml_inference_error",
+                    "severity": "low",
+                    "error": str(exc),
+                }
+            )
+            return
+
+        for index, event in enumerate(ml_events):
+            self._emit(
+                {
+                    "source": "ml",
+                    "type": "ml_prediction",
+                    "severity": "high"
+                    if event.get("label", "").lower() not in {"benign", "normal"}
+                    else "info",
+                    "flow_index": index,
+                    **event,
+                }
+            )
+
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
         """Process one LiveZeekReader batch."""
         return self.feature_processor.process(batch)
