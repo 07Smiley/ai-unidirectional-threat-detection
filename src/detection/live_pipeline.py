@@ -28,15 +28,48 @@ class LiveDetectionPipeline:
         if self.callback is not None:
             self.callback(event)
 
-    def _process_features(self, features: pd.DataFrame) -> None:
-        rule_events = self.rule_detector.process(features)
+    @staticmethod
+    def _metadata(row: pd.Series) -> dict:
+        """Extract routing metadata without feeding it into the ML model."""
+        mapping = {
+            "src_ip": ("src_ip", "id.orig_h"),
+            "dst_ip": ("dst_ip", "id.resp_h"),
+            "src_port": ("src_port", "id.orig_p"),
+            "dst_port": ("dst_port", "id.resp_p"),
+            "protocol": ("protocol", "proto"),
+            "timestamp": ("first_seen", "ts"),
+        }
+        result = {}
+        for output, candidates in mapping.items():
+            for column in candidates:
+                if column in row.index and pd.notna(row[column]):
+                    result[output] = row[column]
+                    break
+        return result
 
-        for event in rule_events:
-            enriched = {"source": "rule", **event}
-            self._emit(enriched)
+    def _emit_ml_predictions(self, features: pd.DataFrame) -> list[dict]:
+        """Run all loaded models and preserve the row each prediction belongs to."""
+        raw = self.models.predict(features)
+        model_names = list(self.models.models)
+        rows_per_model = len(features)
+        events = []
+        offset = 0
 
+        for model_name in model_names:
+            for row_index in range(rows_per_model):
+                if offset + row_index >= len(raw):
+                    break
+                event = dict(raw[offset + row_index])
+                event["flow_index"] = row_index
+                event.update(self._metadata(features.iloc[row_index]))
+                events.append(event)
+            offset += rows_per_model
+
+        return events
+
+    def _emit_scored_ml(self, features: pd.DataFrame) -> list[dict]:
         try:
-            ml_events = self.models.predict(features)
+            ml_events = self._emit_ml_predictions(features)
         except (ValueError, RuntimeError) as exc:
             self._emit(
                 {
@@ -46,7 +79,7 @@ class LiveDetectionPipeline:
                     "error": str(exc),
                 }
             )
-            return
+            return []
 
         for event in ml_events:
             self._emit(
@@ -69,6 +102,15 @@ class LiveDetectionPipeline:
                 "response_available": response_offer(score),
             }
         )
+        return ml_events
+
+    def _process_features(self, features: pd.DataFrame) -> None:
+        rule_events = self.rule_detector.process(features)
+
+        for event in rule_events:
+            self._emit({"source": "rule", **event})
+
+        self._emit_scored_ml(features)
 
     @property
     def model_status(self) -> dict:
@@ -78,42 +120,7 @@ class LiveDetectionPipeline:
         """Run packet-derived CICFlow features through the trained ML models."""
         if features is None or features.empty:
             return
-
-        try:
-            ml_events = self.models.predict(features)
-        except (ValueError, RuntimeError) as exc:
-            self._emit(
-                {
-                    "source": "ml",
-                    "type": "ml_inference_error",
-                    "severity": "low",
-                    "error": str(exc),
-                }
-            )
-            return
-
-        for index, event in enumerate(ml_events):
-            self._emit(
-                {
-                    "source": "ml",
-                    "type": "ml_prediction",
-                    "severity": "high"
-                    if event.get("label", "").lower() not in {"benign", "normal"}
-                    else "info",
-                    "flow_index": index,
-                    **event,
-                }
-            )
-
-        score = calculate_threat_score(ml_events)
-        self._emit(
-            {
-                "source": "scoring",
-                "type": "threat_score",
-                "score": score,
-                "response_available": response_offer(score),
-            }
-        )
+        self._emit_scored_ml(features)
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
         """Process one LiveZeekReader batch."""
