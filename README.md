@@ -187,3 +187,35 @@ A real deployment should also be tested with a real network interface and contro
 ## License
 
 See [LICENSE](LICENSE).
+
+
+## Train the seven unidirectional models
+
+Training data stays local and is never committed to the repository. Point the
+batch trainer at a directory containing CICIDS/CICFlowMeter CSV files:
+
+```bash
+python -m src.models.train_all_unidirectional /path/to/cicids_csvs src/models/pkl
+```
+
+It produces:
+
+- `bot_unidirectional.pkl`
+- `ddos_unidirectional.pkl`
+- `dos_unidirectional.pkl`
+- `infiltration_unidirectional.pkl`
+- `patator_unidirectional.pkl`
+- `portscan_unidirectional.pkl`
+- `webattack_unidirectional.pkl`
+
+The runtime automatically prefers these artifacts when they exist and falls
+back to the legacy detector artifacts otherwise. The trainer prints a
+classification report for each detector; those metrics must be reviewed before
+using response actions.
+
+## User-confirmed response
+
+A threat score at or above the configured response threshold creates a response
+offer only. The dashboard asks for explicit confirmation before calling
+`POST /api/live/response`. Blocking is performed on the monitored host using
+the platform firewall and is never automatic.
