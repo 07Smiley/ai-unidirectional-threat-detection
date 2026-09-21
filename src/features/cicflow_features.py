@@ -251,6 +251,16 @@ class CICFlowExtractor:
             return value / duration if duration > 0 else 0.0
 
         return {
+            # Metadata is carried alongside the feature vector for alert routing.
+            # Runtime model input selects only CICFLOW_FEATURES, so these fields
+            # never become training features.
+            "src_ip": state.src_ip,
+            "dst_ip": state.dst_ip,
+            "src_port": state.src_port,
+            "dst_port": state.dst_port,
+            "protocol": state.proto,
+            "first_seen": state.first_seen,
+            "last_seen": state.last_seen,
             "Destination Port": state.dst_port,
             "Flow Duration": duration * 1_000_000.0,
             "Total Fwd Packets": len(state.fwd_sizes),
