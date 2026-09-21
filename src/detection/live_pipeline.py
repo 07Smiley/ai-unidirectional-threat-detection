@@ -105,6 +105,16 @@ class LiveDetectionPipeline:
                 }
             )
 
+        score = calculate_threat_score(ml_events)
+        self._emit(
+            {
+                "source": "scoring",
+                "type": "threat_score",
+                "score": score,
+                "response_available": response_offer(score),
+            }
+        )
+
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
         """Process one LiveZeekReader batch."""
         return self.feature_processor.process(batch)
