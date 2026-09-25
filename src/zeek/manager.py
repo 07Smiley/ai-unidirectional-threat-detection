@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from pathlib import Path
+import os
 import shutil
 import signal
+import socket
 import subprocess
 import time
 
@@ -55,17 +57,34 @@ class ZeekManager:
 
     @staticmethod
     def _find_zeek() -> str:
-        found = shutil.which("zeek")
+        found = shutil.which("zeek") or shutil.which("zeek.exe")
         if found:
             return found
-        for candidate in COMMON_ZEEK_PATHS:
+
+        installer = ZeekInstaller()
+        local = installer.find_local_zeek()
+        if local:
+            return local
+
+        candidates = list(COMMON_ZEEK_PATHS)
+        if os.name == "nt":
+            candidates.extend(
+                [
+                    r"C:\Program Files\Zeek\bin\zeek.exe",
+                    r"C:\Program Files\Zeek\zeek.exe",
+                    r"C:\Program Files (x86)\Zeek\bin\zeek.exe",
+                ]
+            )
+
+        for candidate in candidates:
             path = Path(candidate)
-            if path.is_file() and path.stat().st_mode & 0o111:
-                return candidate
-        return "zeek"
+            if path.is_file() and (os.name == "nt" or path.stat().st_mode & 0o111):
+                return str(path)
+        return "zeek.exe" if os.name == "nt" else "zeek"
 
     def is_installed(self) -> bool:
-        return Path(self.zeek_binary).is_file() or shutil.which(self.zeek_binary) is not None
+        path = Path(self.zeek_binary)
+        return path.is_file() or shutil.which(self.zeek_binary) is not None
 
     def ensure_installed(self) -> bool:
         if self.is_installed():
@@ -98,17 +117,34 @@ class ZeekManager:
     def list_interfaces(self) -> list[str]:
         """Return interfaces visible to the operating system."""
         interfaces_dir = Path("/sys/class/net")
-        if interfaces_dir.exists():
+        if os.name != "nt" and interfaces_dir.exists():
             return sorted(p.name for p in interfaces_dir.iterdir() if p.is_dir())
 
         try:
-            import socket
-
             names = [name for _, name in socket.if_nameindex()]
             if names:
                 return sorted(dict.fromkeys(names))
         except (AttributeError, OSError):
             pass
+
+        if os.name == "nt":
+            try:
+                result = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        "(Get-NetAdapter | Where-Object {$_.Status -ne 'Disabled'}).Name",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return []
+            names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            return sorted(dict.fromkeys(names))
 
         try:
             result = subprocess.run(
@@ -128,7 +164,7 @@ class ZeekManager:
                 name = parts[1].split(":", 1)[0]
                 if name:
                     interfaces.append(name)
-        return interfaces
+        return sorted(dict.fromkeys(interfaces))
 
     def clear_logs(self) -> None:
         """Remove logs from the dedicated live-capture directory."""
@@ -181,14 +217,21 @@ class ZeekManager:
             "local",
             "Log::default_rotation_interval=0sec",
         ]
-        self.process = subprocess.Popen(
-            command,
-            cwd=self.log_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
+
+        popen_kwargs = {
+            "cwd": self.log_dir,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.PIPE,
+            "text": True,
+        }
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            )
+        else:
+            popen_kwargs["start_new_session"] = True
+
+        self.process = subprocess.Popen(command, **popen_kwargs)
         self.interface = interface
 
         deadline = time.monotonic() + startup_timeout
@@ -203,6 +246,44 @@ class ZeekManager:
             time.sleep(0.1)
 
         return self.status()
+
+    def verify_live_capture(
+        self,
+        interface: str,
+        startup_timeout: float = 5.0,
+        log_timeout: float = 3.0,
+    ) -> dict[str, object]:
+        """Smoke-test Zeek on the selected interface and cleanly stop it."""
+        if self.process is not None and self.process.poll() is None:
+            return {
+                "ready": True,
+                "interface": interface,
+                "message": "Zeek live capture is already running.",
+            }
+
+        try:
+            self.start(interface, startup_timeout=startup_timeout)
+            log_ready = self.wait_for_log("conn.log", timeout=log_timeout)
+            if self.process is None or self.process.poll() is not None:
+                raise RuntimeError("Zeek exited during live-capture verification.")
+            return {
+                "ready": bool(log_ready),
+                "interface": interface,
+                "log_ready": bool(log_ready),
+                "message": (
+                    "Zeek accepted the interface and conn.log is live."
+                    if log_ready
+                    else "Zeek started, but conn.log did not receive data yet."
+                ),
+            }
+        except Exception as exc:
+            return {
+                "ready": False,
+                "interface": interface,
+                "message": str(exc),
+            }
+        finally:
+            self.stop()
 
     def wait_for_log(self, log_name: str = "conn.log", timeout: float = 10.0) -> bool:
         deadline = time.monotonic() + timeout
@@ -221,7 +302,10 @@ class ZeekManager:
 
         if self.process.poll() is None:
             try:
-                self.process.send_signal(signal.SIGTERM)
+                if os.name == "nt":
+                    self.process.terminate()
+                else:
+                    self.process.send_signal(signal.SIGTERM)
                 self.process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 self.process.kill()
