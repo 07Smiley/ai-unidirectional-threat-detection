@@ -23,18 +23,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 MODEL_DIR = REPO_ROOT / "src" / "models" / "pkl"
 
-# Prefer direction-agnostic artifacts once trained. Legacy artifacts remain
-# the compatibility fallback until local CICIDS data is processed.
+# Live inference is intentionally restricted to the unidirectional artifacts.
+# Legacy *_detector.pkl files may remain in the repository for compatibility
+# and historical experiments, but they must never be loaded by the live engine.
 MODEL_NAMES = (
     "bot", "ddos", "dos", "infiltration", "patator", "portscan", "webattack",
 )
 
 DEFAULT_MODEL_PATHS = {
-    name: (
-        MODEL_DIR / f"{name}_unidirectional.pkl"
-        if (MODEL_DIR / f"{name}_unidirectional.pkl").exists()
-        else MODEL_DIR / f"{name}_detector.pkl"
-    )
+    name: MODEL_DIR / f"{name}_unidirectional.pkl"
     for name in MODEL_NAMES
 }
 
@@ -144,7 +141,11 @@ class RuntimeModelRegistry:
         return predictions
 
     def status(self) -> dict[str, Any]:
+        loaded = sorted(self.models)
         return {
-            "loaded_models": sorted(self.models),
+            "engine": "UNIDIRECTIONAL ML ENGINE" if loaded else "UNIDIRECTIONAL ML ENGINE (NO MODELS)",
+            "schema": "forward-only",
+            "loaded_models": loaded,
             "unavailable_models": self.errors.copy(),
+            "legacy_models_ignored": True,
         }
