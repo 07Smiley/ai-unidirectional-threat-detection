@@ -210,7 +210,7 @@ class ZeekInstaller:
         for root in roots:
             if root.exists() and any(
                 (root / relative).exists()
-                for relative in ("Include", "Lib", "Lib\x64", "Lib\wpcap.lib")
+                for relative in ("Include", "Lib", "Lib/x64", "Lib/wpcap.lib")
             ):
                 return root
         return None
@@ -227,40 +227,68 @@ class ZeekInstaller:
             required.append("MSVC developer environment (cl.exe)")
         return required
 
-    def _prepare_windows(self) -> InstallResult:
-        if not self._npcap_present():
+    def _windows_setup_script(self) -> Path:
+        return self._repo_root() / "scripts" / "windows" / "setup-zeek.ps1"
+
+    def _run_windows_setup(self) -> InstallResult:
+        script = self._windows_setup_script()
+        if not script.is_file():
             return InstallResult(
                 False,
                 self.system,
-                "npcap-required",
-                "Windows live capture requires Npcap. Install Npcap, then rerun the Windows setup helper.",
+                "native-build",
+                f"Windows setup script not found: {script}",
             )
 
-        sdk = self._find_npcap_sdk()
-        if sdk is None:
+        powershell = shutil.which("powershell") or shutil.which("pwsh")
+        if not powershell:
             return InstallResult(
                 False,
                 self.system,
-                "npcap-sdk-required",
-                "Npcap is installed, but the Npcap SDK was not found. Zeek's Windows live-capture build must link against the Npcap SDK.",
+                "powershell-required",
+                "PowerShell is required for automatic Windows Zeek setup.",
             )
 
-        missing = self._windows_build_prerequisites()
-        if missing:
+        result = self.runner(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+            ],
+            cwd=str(self._repo_root()),
+        )
+        local = self.find_local_zeek()
+        if result.returncode == 0 and local:
             return InstallResult(
-                False,
+                True,
                 self.system,
-                "native-build-prerequisites",
-                "Windows Zeek build prerequisites missing: " + ", ".join(missing) + ".",
+                "windows-bootstrap",
+                f"Zeek was prepared automatically: {local}",
             )
 
+        output = "\n".join(
+            part.strip()
+            for part in (
+                getattr(result, "stdout", "") or "",
+                getattr(result, "stderr", "") or "",
+            )
+            if part and part.strip()
+        )
         return InstallResult(
             False,
             self.system,
-            "native-build",
-            f"Npcap and SDK are present at {sdk}, but no local Zeek binary was found. "
-            "Run the Windows build helper to compile Zeek with -DPCAP_ROOT_DIR set to the SDK.",
+            "windows-bootstrap",
+            output or "Windows Zeek bootstrap did not complete successfully.",
         )
+
+    def _prepare_windows(self) -> InstallResult:
+        # The project-local bootstrap owns elevation, Npcap installation,
+        # Visual Studio/CMake/Ninja setup, SDK download, source checkout,
+        # and the native Zeek build. A UAC prompt may still be required.
+        return self._run_windows_setup()
 
 
 def ensure_zeek_installed(auto_install: bool = True) -> InstallResult:
