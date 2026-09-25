@@ -35,7 +35,7 @@ function Ensure-Elevated {
     $args = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", $PSCommandPath,
+        "-File", "`"$PSCommandPath`"",
         "-SkipElevation"
     )
     $child = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $args -WorkingDirectory $root -Wait -PassThru
@@ -51,6 +51,12 @@ function Find-CommandPath([string]$Name) {
         return $command.Source
     }
     return $null
+}
+
+function Refresh-Path {
+    $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $user = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = (($machine, $user) -join ";")
 }
 
 function Invoke-WingetInstall([string]$Id, [string]$Override = "") {
@@ -78,6 +84,7 @@ function Invoke-WingetInstall([string]$Id, [string]$Override = "") {
 function Ensure-Tool([string]$Command, [string]$WingetId) {
     if (-not (Find-CommandPath $Command)) {
         Invoke-WingetInstall $WingetId
+        Refresh-Path
     }
 }
 
@@ -185,9 +192,10 @@ function Ensure-WindowsTools {
     Ensure-Tool "cmake" "Kitware.CMake"
     Ensure-Tool "ninja" "Ninja-build.Ninja"
 
-    if (-not (Find-CommandPath "cl")) {
+    if (-not (Find-VcVars)) {
         Write-Host "[windows-bootstrap] MSVC C++ Build Tools not detected."
         Invoke-WingetInstall "Microsoft.VisualStudio.BuildTools" '--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
+        Refresh-Path
     }
 }
 
