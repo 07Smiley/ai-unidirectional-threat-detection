@@ -98,6 +98,8 @@ Combine directionality, rate, entropy, protocol metadata and model confidence in
 
 ## Setup
 
+The normal launcher is designed as a one-command entry point. On first run it creates a project-local `.venv`, installs/updates the packages in `requirements.txt`, checks Zeek, and then starts the backend and dashboard. A dependency marker prevents a full reinstall on every launch; it is refreshed automatically when `requirements.txt` changes.
+
 The launcher performs a Zeek preflight before starting the dashboard. Live capture is only considered ready after Zeek is started on the selected interface and the live `conn.log` path is verified.
 
 ### Linux
