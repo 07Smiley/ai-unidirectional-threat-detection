@@ -102,6 +102,10 @@ The normal launcher is designed as a one-command entry point. On first run it cr
 
 The launcher performs a Zeek preflight before starting the dashboard. Live capture is only considered ready after Zeek is started on the selected interface and the live `conn.log` path is verified.
 
+The launcher also handles capture privileges. On Linux and macOS, a normal user launch requests `sudo` and relaunches the project with the required privileges. On Windows, the launcher requests UAC administrator elevation. The elevated process is marked internally so it does not repeatedly relaunch itself.
+
+This elevation is used because the live sensor opens packet-capture interfaces directly. The application does not silently disable capture or pretend that live monitoring is working when the operating system denies access.
+
 ### Linux
 
 Install Python dependencies:
