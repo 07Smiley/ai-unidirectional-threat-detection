@@ -116,10 +116,18 @@ class LiveMonitoringService:
         if self.worker is not None and self.worker.is_alive():
             raise RuntimeError("Live monitoring is already running.")
 
+        capture_check = self.zeek.verify_live_capture(
+            interface,
+            startup_timeout=5.0,
+            log_timeout=3.0,
+        )
+        if not capture_check.get("ready"):
+            raise RuntimeError(
+                "Live Zeek capture is not ready: "
+                + str(capture_check.get("message") or "unknown capture error")
+            )
+
         status = self.zeek.start(interface)
-        if not self.zeek.wait_for_log("conn.log", timeout=10):
-            self.zeek.stop()
-            raise RuntimeError("Zeek started but conn.log did not become available.")
 
         self.loop = loop
         self.stop_event.clear()
