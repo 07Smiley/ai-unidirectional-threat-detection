@@ -15,6 +15,7 @@ from src.zeek.installer import ZeekInstaller
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / ".venv"
 PYTHON = sys.executable
+PRIVILEGED_FLAG = "--privileged"
 BACKEND_HOST = os.environ.get("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = os.environ.get("BACKEND_PORT", "8000")
 DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
@@ -71,7 +72,7 @@ def ensure_python_environment() -> None:
 
 def ensure_capture_privileges() -> None:
     """Relaunch the launcher with capture privileges when the OS requires them."""
-    if os.environ.get("AI_UD_PRIV_ESCALATED") == "1":
+    if PRIVILEGED_FLAG in sys.argv or os.environ.get("AI_UD_PRIV_ESCALATED") == "1":
         return
 
     if os.name == "nt":
@@ -112,7 +113,7 @@ def ensure_capture_privileges() -> None:
         env["AI_UD_PRIV_ESCALATED"] = "1"
         os.execvpe(
             sudo,
-            [sudo, "-E", sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
+            [sudo, "-E", sys.executable, str(Path(__file__).resolve()), PRIVILEGED_FLAG, *[arg for arg in sys.argv[1:] if arg != PRIVILEGED_FLAG]],
             env,
         )
 
@@ -120,10 +121,14 @@ def ensure_capture_privileges() -> None:
 def preflight():
     ensure_python_environment()
 
-    result = ZeekInstaller().ensure(auto_install=True)
-    if not result.installed:
-        raise RuntimeError("Zeek setup is incomplete: " + (result.message or "unknown installation error"))
-    print("[launcher] Zeek ready (" + str(result.method) + ").")
+    zeek = ZeekInstaller()
+    if not zeek.find_local_zeek() and not shutil.which("zeek") and not shutil.which("zeek.exe"):
+        result = zeek.ensure(auto_install=True)
+        if not result.installed:
+            raise RuntimeError("Zeek setup is incomplete: " + (result.message or "unknown installation error"))
+        print("[launcher] Zeek ready (" + str(result.method) + ").")
+    else:
+        print("[launcher] Zeek ready (existing).")
 
     ensure_capture_privileges()
 
