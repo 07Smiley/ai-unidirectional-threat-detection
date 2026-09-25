@@ -106,6 +106,8 @@ The launcher also handles capture privileges. On Linux and macOS, a normal user 
 
 This elevation is used because the live sensor opens packet-capture interfaces directly. The application does not silently disable capture or pretend that live monitoring is working when the operating system denies access.
 
+Startup diagnostics now distinguish common failures such as missing/blocked packet-capture permissions, unavailable interfaces, and Windows Npcap/libpcap problems. The API returns these messages to the dashboard instead of exposing only a generic startup failure.
+
 ### Linux
 
 Install Python dependencies:
