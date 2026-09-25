@@ -16,7 +16,6 @@ import pandas as pd
 # other aggregate that can contain backward traffic.
 UNIDIRECTIONAL_FEATURES = [
     "Destination Port",
-    "Flow Duration",
     "Total Fwd Packets",
     "Total Length of Fwd Packets",
     "Fwd Packet Length Max",
@@ -31,7 +30,6 @@ UNIDIRECTIONAL_FEATURES = [
     "Fwd PSH Flags",
     "Fwd URG Flags",
     "Fwd Header Length",
-    "Fwd Packets/s",
 ]
 
 # Columns that are known to include both directions or are explicitly backward.
@@ -78,7 +76,6 @@ def from_row(row: Mapping[str, Any]) -> dict[str, float]:
     """Extract only features observable in the forward/selected direction."""
     return {
         "Destination Port": _num(row, "Destination Port"),
-        "Flow Duration": _num(row, "Flow Duration"),
         "Total Fwd Packets": _num(row, "Total Fwd Packets"),
         "Total Length of Fwd Packets": _num(row, "Total Length of Fwd Packets"),
         "Fwd Packet Length Max": _num(row, "Fwd Packet Length Max"),
@@ -93,7 +90,6 @@ def from_row(row: Mapping[str, Any]) -> dict[str, float]:
         "Fwd PSH Flags": _num(row, "Fwd PSH Flags"),
         "Fwd URG Flags": _num(row, "Fwd URG Flags"),
         "Fwd Header Length": _num(row, "Fwd Header Length"),
-        "Fwd Packets/s": _num(row, "Fwd Packets/s"),
     }
 
 
