@@ -38,3 +38,28 @@ def test_start_rejects_unknown_interface(monkeypatch):
         assert str(exc) == "Network interface not found: does-not-exist"
     else:
         raise AssertionError("Expected ValueError for an unknown interface")
+
+
+def test_windows_local_binary_is_detected(monkeypatch, tmp_path):
+    local = tmp_path / "zeek.exe"
+    local.write_text("stub", encoding="utf-8")
+
+    manager = ZeekManager()
+    monkeypatch.setattr(manager, "is_installed", lambda: True)
+    manager.zeek_binary = str(local)
+
+    assert manager.is_installed() is True
+
+
+def test_verify_live_capture_rolls_back_on_failure(monkeypatch):
+    manager = ZeekManager()
+    calls = []
+
+    monkeypatch.setattr(manager, "start", lambda interface, startup_timeout=5.0: calls.append(("start", interface)))
+    monkeypatch.setattr(manager, "wait_for_log", lambda *args, **kwargs: False)
+    monkeypatch.setattr(manager, "stop", lambda: calls.append(("stop", None)))
+
+    result = manager.verify_live_capture("wlan0", startup_timeout=1.0, log_timeout=0.1)
+
+    assert result["ready"] is False
+    assert calls == [("start", "wlan0"), ("stop", None)]
