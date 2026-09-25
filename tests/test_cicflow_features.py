@@ -23,6 +23,10 @@ def test_bidirectional_flow_features():
 
     assert row["Destination Port"] == 80
     assert row["Total Fwd Packets"] == 2
+    assert row["Total Length of Fwd Packets"] == 40
+    assert row["Fwd Packet Length Max"] == 20
+    assert row["Fwd Packet Length Min"] == 20
+    assert row["Fwd Packet Length Mean"] == 20
     assert row["Total Backward Packets"] == 1
     assert row["SYN Flag Count"] == 2
     assert row["ACK Flag Count"] == 2
