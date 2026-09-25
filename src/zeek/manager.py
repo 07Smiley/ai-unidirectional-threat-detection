@@ -25,6 +25,25 @@ COMMON_ZEEK_PATHS = (
 
 
 @dataclass
+class InterfaceInfo:
+    name: str
+    display_name: str
+    kind: str = "unknown"
+    up: bool = False
+    running: bool = False
+    loopback: bool = False
+    virtual: bool = False
+    mac: str | None = None
+    ipv4: list[str] | None = None
+    ipv6: list[str] | None = None
+    usable: bool = False
+    reason: str | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class ZeekStatus:
     installed: bool
     version: str | None = None
@@ -115,56 +134,139 @@ class ZeekManager:
         return output or None
 
     def list_interfaces(self) -> list[str]:
-        """Return interfaces visible to the operating system."""
+        """Return interface names visible to the operating system."""
+        return [item["name"] for item in self.list_interface_details()]
+
+    @staticmethod
+    def _interface_kind(name: str, wireless: bool = False, virtual: bool = False) -> str:
+        lower = name.lower()
+        if lower in {"lo", "lo0", "loopback"} or lower.startswith("loopback"):
+            return "loopback"
+        if wireless:
+            return "wifi"
+        if virtual or any(token in lower for token in ("docker", "veth", "virbr", "br-", "tun", "tap", "vmnet")):
+            return "virtual"
+        if lower.startswith(("en", "eth", "em", "eno", "ens", "enp")):
+            return "ethernet"
+        return "unknown"
+
+    def list_interface_details(self) -> list[dict]:
+        """Return capture-relevant metadata for every visible interface."""
+        names = self._raw_interface_names()
+        details: list[InterfaceInfo] = []
+
+        if os.name == "nt":
+            ps = self._windows_interface_details()
+            for name in names:
+                item = ps.get(name, {})
+                kind = self._interface_kind(
+                    name,
+                    wireless=("wi-fi" in str(item.get("description", "")).lower() or "wireless" in str(item.get("description", "")).lower()),
+                    virtual=("virtual" in str(item.get("description", "")).lower()),
+                )
+                up = str(item.get("status", "")).lower() in {"up", "connected"}
+                details.append(InterfaceInfo(
+                    name=name, display_name=item.get("description") or name, kind=kind,
+                    up=up, running=up, loopback=kind == "loopback",
+                    virtual=kind == "virtual", mac=item.get("mac"),
+                    usable=up and kind != "loopback",
+                    reason=None if up and kind != "loopback" else ("Loopback is not a normal live-capture adapter." if kind == "loopback" else "Interface is not up."),
+                ))
+            return [item.to_dict() for item in details]
+
+        for name in names:
+            base = Path("/sys/class/net") / name
+            operstate = ""
+            mac = None
+            wireless = (base / "wireless").exists()
+            virtual = not (base / "device").exists() if base.exists() else False
+            try:
+                operstate = (base / "operstate").read_text(encoding="utf-8").strip().lower()
+            except (OSError, UnicodeError):
+                pass
+            try:
+                mac = (base / "address").read_text(encoding="utf-8").strip() or None
+            except (OSError, UnicodeError):
+                pass
+            kind = self._interface_kind(name, wireless=wireless, virtual=virtual)
+            loopback = kind == "loopback"
+            up = operstate in {"up", "unknown"} or name in {"lo", "lo0"}
+            reason = None
+            usable = up and not loopback
+            if loopback:
+                reason = "Loopback is not a normal live-capture adapter."
+            elif not up:
+                reason = "Interface is not up."
+            details.append(InterfaceInfo(
+                name=name, display_name=name, kind=kind, up=up, running=up,
+                loopback=loopback, virtual=virtual, mac=mac, usable=usable, reason=reason,
+            ))
+        return [item.to_dict() for item in details]
+
+    def _raw_interface_names(self) -> list[str]:
         interfaces_dir = Path("/sys/class/net")
         if os.name != "nt" and interfaces_dir.exists():
             return sorted(p.name for p in interfaces_dir.iterdir() if p.is_dir())
-
         try:
             names = [name for _, name in socket.if_nameindex()]
             if names:
                 return sorted(dict.fromkeys(names))
         except (AttributeError, OSError):
             pass
-
         if os.name == "nt":
             try:
                 result = subprocess.run(
-                    [
-                        "powershell",
-                        "-NoProfile",
-                        "-Command",
-                        "(Get-NetAdapter | Where-Object {$_.Status -ne 'Disabled'}).Name",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=10,
+                    ["powershell", "-NoProfile", "-Command",
+                     "(Get-NetAdapter | Where-Object {$_.Status -ne 'Disabled'}).Name"],
+                    capture_output=True, text=True, check=False, timeout=10,
                 )
             except (OSError, subprocess.SubprocessError):
                 return []
-            names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-            return sorted(dict.fromkeys(names))
-
+            return sorted(dict.fromkeys(line.strip() for line in result.stdout.splitlines() if line.strip()))
         try:
-            result = subprocess.run(
-                ["ip", "-o", "link", "show"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=10,
-            )
+            result = subprocess.run(["ip", "-o", "link", "show"], capture_output=True, text=True, check=False, timeout=10)
         except (OSError, subprocess.SubprocessError):
             return []
+        return sorted(dict.fromkeys(
+            parts[1].split(":", 1)[0] for line in result.stdout.splitlines()
+            if len(parts := line.split(": ", 1)) == 2 and parts[1].split(":", 1)[0]
+        ))
 
-        interfaces: list[str] = []
-        for line in result.stdout.splitlines():
-            parts = line.split(": ", 1)
-            if len(parts) == 2:
-                name = parts[1].split(":", 1)[0]
-                if name:
-                    interfaces.append(name)
-        return sorted(dict.fromkeys(interfaces))
+    def _windows_interface_details(self) -> dict[str, dict]:
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,MacAddress | ConvertTo-Json -Compress"],
+                capture_output=True, text=True, check=False, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return {}
+        try:
+            import json
+            payload = json.loads(result.stdout or "[]")
+        except (ValueError, TypeError):
+            return {}
+        if isinstance(payload, dict):
+            payload = [payload]
+        return {
+            str(item.get("Name")): {
+                "description": item.get("InterfaceDescription"),
+                "status": item.get("Status"),
+                "mac": item.get("MacAddress"),
+            }
+            for item in payload if item.get("Name")
+        }
+
+    def validate_interface(self, interface: str) -> dict[str, object]:
+        """Validate that an interface is suitable for normal live capture."""
+        details = next((item for item in self.list_interface_details() if item["name"] == interface), None)
+        if details is None:
+            return {"valid": False, "interface": interface, "reason": "Network interface not found."}
+        if details.get("loopback"):
+            return {"valid": False, "interface": interface, "reason": "Loopback interfaces are not supported for normal live capture.", "details": details}
+        if not details.get("up"):
+            return {"valid": False, "interface": interface, "reason": "Interface is not up. Connect or enable the adapter first.", "details": details}
+        return {"valid": True, "interface": interface, "reason": None, "details": details}
 
     def clear_logs(self) -> None:
         """Remove logs from the dedicated live-capture directory."""
@@ -229,8 +331,9 @@ class ZeekManager:
                 "Zeek is not installed and automatic installation failed: "
                 f"{self.install_message or 'unknown installation error'}"
             )
-        if interface not in self.list_interfaces():
-            raise ValueError(f"Network interface not found: {interface}")
+        validation = self.validate_interface(interface)
+        if not validation["valid"]:
+            raise ValueError(str(validation["reason"]))
         if self.process is not None and self.process.poll() is None:
             raise RuntimeError("Zeek is already running.")
 
