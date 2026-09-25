@@ -37,9 +37,18 @@ The application is designed around **passive monitoring**. It does not need to a
 - Dashboard provides live interface controls, status and threat events.
 - Historical PCAPs/datasets are retained only for development, testing and model training; live monitoring does not depend on manually supplied traffic data.
 
-## Unidirectional features we can add
+## Unidirectional detection model
 
-These are useful specifically because normal bidirectional network assumptions do not always hold.
+The live ML engine uses a strict forward-only feature schema. It does not feed Bwd/Backward
+features or aggregate fields such as Total Packets / Total Bytes into the ML models.
+
+The same unidirectional observation can support multiple threat families. DDoS is only one
+detector; the runtime is designed to load separate unidirectional artifacts for DDoS, DoS,
+PortScan, Infiltration, Patator, WebAttack and Bot/Net behavior. Behavioral detectors such
+as beaconing/C2, DGA/DNS, TLS/QUIC anomalies and exfiltration can operate alongside the ML
+detectors when their required features are available.
+
+These capabilities are useful specifically because normal bidirectional network assumptions do not always hold.
 
 ### 1. Directionality / asymmetry score
 Measure how strongly a flow behaves as one-way traffic using packet, byte and timing statistics.
@@ -89,10 +98,10 @@ Combine directionality, rate, entropy, protocol metadata and model confidence in
 | WebSocket live events | Implemented |
 | Dashboard live controls | Implemented |
 | ML runtime/schema validation | Implemented |
-| ML models trained on exact live schema | **Remaining** |
-| ML predictions connected to dashboard verdicts | **Remaining** |
+| ML models trained on exact live schema | **In progress** |
+| ML predictions connected to dashboard verdicts | Implemented |
 | Alert deduplication | **Remaining** |
-| Unidirectional-aware feature set | **Next feature phase** |
+| Unidirectional-aware feature set | Implemented |
 | Full real-NIC end-to-end validation | **Remaining** |
 | Cross-platform deployment validation | **Remaining** |
 
@@ -286,10 +295,10 @@ It produces:
 - `portscan_unidirectional.pkl`
 - `webattack_unidirectional.pkl`
 
-The runtime automatically prefers these artifacts when they exist and falls
-back to the legacy detector artifacts otherwise. The trainer prints a
-classification report for each detector; those metrics must be reviewed before
-using response actions.
+The live runtime loads only these *_unidirectional.pkl artifacts. Legacy
+*_detector.pkl files are not used by live inference, even if they remain in the
+repository for historical compatibility. The trainer prints a classification report
+for each detector; those metrics must be reviewed before using response actions.
 
 ## User-confirmed response
 
