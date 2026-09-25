@@ -104,15 +104,23 @@ def test_linux_ubuntu_uses_official_obs_repository(monkeypatch):
 
 def test_macos_installer_bootstraps_homebrew_when_missing(monkeypatch):
     installer = ZeekInstaller(system="Darwin")
-    monkeypatch.setattr(installer, "_find_brew", lambda: None)
-    monkeypatch.setattr(installer, "_install_homebrew", lambda: __import__(
-        "src.zeek.installer", fromlist=["InstallResult"]
-    ).InstallResult(True, "Darwin", "homebrew-bootstrap", "ok"))
+    state = {"brew": None}
+
+    def find_brew():
+        return state["brew"]
+
+    def bootstrap():
+        state["brew"] = "/opt/homebrew/bin/brew"
+        return __import__(
+            "src.zeek.installer", fromlist=["InstallResult"]
+        ).InstallResult(True, "Darwin", "homebrew-bootstrap", "ok")
+
+    monkeypatch.setattr(installer, "_find_brew", find_brew)
+    monkeypatch.setattr(installer, "_install_homebrew", bootstrap)
     monkeypatch.setattr(installer, "_command_exists", lambda name: False)
-    monkeypatch.setattr(installer, "_find_brew", lambda: "/opt/homebrew/bin/brew")
-    monkeypatch.setattr(installer, "runner", lambda command, **kwargs: SimpleNamespace(
+    installer.runner = lambda command, **kwargs: SimpleNamespace(
         returncode=0, stdout="", stderr=""
-    ))
+    )
 
     result = installer.ensure(auto_install=True)
 
