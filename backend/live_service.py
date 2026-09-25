@@ -116,6 +116,10 @@ class LiveMonitoringService:
         if self.worker is not None and self.worker.is_alive():
             raise RuntimeError("Live monitoring is already running.")
 
+        validation = self.zeek.validate_interface(interface)
+        if not validation.get("valid"):
+            raise ValueError(str(validation.get("reason") or "Selected interface is not suitable for live capture."))
+
         capture_check = self.zeek.verify_live_capture(
             interface,
             startup_timeout=5.0,
@@ -187,6 +191,7 @@ class LiveMonitoringService:
             "running": bool(self.worker and self.worker.is_alive()),
             "interface": zeek_status.get("interface"),
             "interfaces": self.zeek.list_interfaces(),
+            "interface_details": self.zeek.list_interface_details(),
             "zeek": zeek_status,
             "models": self.pipeline.model_status,
             "latest_ml": self.latest_ml,
