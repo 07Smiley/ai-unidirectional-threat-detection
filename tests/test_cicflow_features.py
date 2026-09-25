@@ -25,6 +25,11 @@ def test_bidirectional_flow_features():
     assert row["SYN Flag Count"] == 2
     assert row["ACK Flag Count"] == 2
     assert row["Flow Duration"] == 300000.0
+    assert row["Fwd IAT Total"] == 300000.0
+    assert row["Fwd IAT Mean"] == 300000.0
+    assert row["Fwd IAT Std"] == 0.0
+    assert row["Fwd IAT Max"] == 300000.0
+    assert row["Fwd IAT Min"] == 300000.0
     assert row["Flow Packets/s"] > 0
 
 
