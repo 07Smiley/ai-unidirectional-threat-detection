@@ -191,6 +191,8 @@ class ZeekManager:
             kind = self._interface_kind(name, wireless=wireless, virtual=virtual)
             loopback = kind == "loopback"
             up = operstate in {"up", "unknown"} or name in {"lo", "lo0"}
+            if not base.exists() and os.name != "nt":
+                up = self._ifconfig_interface_up(name)
             reason = None
             usable = up and not loopback
             if loopback:
@@ -231,6 +233,21 @@ class ZeekManager:
             parts[1].split(":", 1)[0] for line in result.stdout.splitlines()
             if len(parts := line.split(": ", 1)) == 2 and parts[1].split(":", 1)[0]
         ))
+
+    @staticmethod
+    def _ifconfig_interface_up(name: str) -> bool:
+        try:
+            result = subprocess.run(
+                ["ifconfig", name],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        output = result.stdout.lower()
+        return result.returncode == 0 and ("status: active" in output or " flags=" in output and "<up" in output)
 
     def _windows_interface_details(self) -> dict[str, dict]:
         try:
