@@ -134,8 +134,8 @@ class ZeekInstaller:
             return ["sudo", *command]
         raise RuntimeError("Linux installation requires root or sudo privileges.")
 
-    def _run_linux(self, command: list[str]):
-        return self.runner(self._linux_privileged(command), capture_output=True)
+    def _run_linux(self, command: list[str], **kwargs):
+        return self.runner(self._linux_privileged(command), capture_output=True, **kwargs)
 
     def _install_apt_zeek(self, distro: str | None, version: str | None) -> InstallResult | None:
         if distro not in {"ubuntu", "debian"} or not version:
@@ -169,7 +169,7 @@ class ZeekInstaller:
                 )
 
         # Write the repository file without invoking a shell.
-        result = self._run_linux(["tee", list_file])
+        result = self._run_linux(["tee", list_file], input="deb " + repo + " /\n")
         if result.returncode != 0:
             return InstallResult(False, self.system, "zeek-obs", "Could not configure the Zeek OBS repository.")
 
