@@ -10,7 +10,6 @@ from src.features.unidirectional_features import (
 def test_only_forward_direction_is_used():
     row = {
         "Destination Port": 80,
-        "Flow Duration": 1000,
         "Total Fwd Packets": 3,
         "Total Backward Packets": 999,
         "Total Length of Fwd Packets": 300,
@@ -36,7 +35,6 @@ def test_only_forward_direction_is_used():
         "Bwd URG Flags": 99,
         "Fwd Header Length": 60,
         "Bwd Header Length": 999,
-        "Fwd Packets/s": 3000,
         "Bwd Packets/s": 999999,
         # Deliberately supplied aggregate values: these must never be used.
         "Total Packets": 1002,
@@ -67,7 +65,6 @@ def test_only_forward_direction_is_used():
 def test_backward_changes_do_not_change_transformed_features():
     base = {
         "Destination Port": 443,
-        "Flow Duration": 5000,
         "Total Fwd Packets": 10,
         "Total Length of Fwd Packets": 1200,
         "Fwd Packet Length Max": 300,
@@ -82,7 +79,6 @@ def test_backward_changes_do_not_change_transformed_features():
         "Fwd PSH Flags": 2,
         "Fwd URG Flags": 0,
         "Fwd Header Length": 200,
-        "Fwd Packets/s": 2,
     }
     first = dict(base, **{
         "Total Backward Packets": 1,
