@@ -100,3 +100,21 @@ def test_linux_ubuntu_uses_official_obs_repository(monkeypatch):
     assert result.installed is True
     assert result.method == "zeek-obs"
     assert any("download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/" in " ".join(command) for command, _ in commands)
+
+
+def test_macos_installer_bootstraps_homebrew_when_missing(monkeypatch):
+    installer = ZeekInstaller(system="Darwin")
+    monkeypatch.setattr(installer, "_find_brew", lambda: None)
+    monkeypatch.setattr(installer, "_install_homebrew", lambda: __import__(
+        "src.zeek.installer", fromlist=["InstallResult"]
+    ).InstallResult(True, "Darwin", "homebrew-bootstrap", "ok"))
+    monkeypatch.setattr(installer, "_command_exists", lambda name: False)
+    monkeypatch.setattr(installer, "_find_brew", lambda: "/opt/homebrew/bin/brew")
+    monkeypatch.setattr(installer, "runner", lambda command, **kwargs: SimpleNamespace(
+        returncode=0, stdout="", stderr=""
+    ))
+
+    result = installer.ensure(auto_install=True)
+
+    assert result.installed is True
+    assert result.method == "homebrew"
