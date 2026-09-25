@@ -10,7 +10,9 @@ from pathlib import Path
 
 from src.zeek.installer import ZeekInstaller
 
+
 ROOT = Path(__file__).resolve().parent
+VENV_DIR = ROOT / ".venv"
 PYTHON = sys.executable
 BACKEND_HOST = os.environ.get("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = os.environ.get("BACKEND_PORT", "8000")
@@ -23,9 +25,51 @@ def start_process(command, name, env=None):
     return subprocess.Popen(command, cwd=ROOT, env=env)
 
 
-def preflight():
+def _venv_python() -> Path:
+    if os.name == "nt":
+        return VENV_DIR / "Scripts" / "python.exe"
+    return VENV_DIR / "bin" / "python"
+
+
+def ensure_python_environment() -> None:
     if sys.version_info < (3, 10):
         raise RuntimeError("Python 3.10 or newer is required.")
+
+    target = _venv_python()
+    if Path(sys.executable).resolve() != target.resolve():
+        if not target.is_file():
+            print("[launcher] Creating project Python environment...")
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(VENV_DIR)],
+                cwd=ROOT,
+                check=True,
+            )
+        print("[launcher] Using project Python environment: " + str(target))
+        os.execv(str(target), [str(target), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+    requirements = ROOT / "requirements.txt"
+    marker = VENV_DIR / ".dependencies-ready"
+    if not requirements.is_file():
+        raise RuntimeError("requirements.txt was not found.")
+
+    if marker.is_file() and marker.stat().st_mtime >= requirements.stat().st_mtime:
+        return
+
+    print("[launcher] Installing/updating Python dependencies...")
+    result = subprocess.run(
+        [str(target), "-m", "pip", "install", "-r", str(requirements)],
+        cwd=ROOT,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("Python dependency installation failed.")
+
+    marker.write_text("ready\\n", encoding="utf-8")
+    print("[launcher] Python dependencies ready.")
+
+
+def preflight():
+    ensure_python_environment()
 
     result = ZeekInstaller().ensure(auto_install=True)
     if not result.installed:
@@ -47,8 +91,7 @@ def preflight():
         except ImportError:
             missing.append(package)
     if missing:
-        raise RuntimeError("Missing Python dependencies: " + ", ".join(sorted(set(missing))) +
-                           ". Run: python -m pip install -r requirements.txt")
+        raise RuntimeError("Missing Python dependencies after installation: " + ", ".join(sorted(set(missing))))
 
 
 def wait_for_url(url, process, name, timeout=15.0):
