@@ -335,15 +335,21 @@ async function loadInterfaces(){
     const s=await (await fetch(LIVE_API+'/api/live/status')).json();
     const select=document.getElementById('interfaceSelect');
     const current=select.value;
-    const interfaces=(s.interfaces||[]);
+    const details=(s.interface_details||[]);
     [...select.options].slice(1).forEach(o => o.remove());
-    interfaces.forEach(i=>{
+    details.forEach(i=>{
       const o=document.createElement('option');
-      o.value=i;
-      o.textContent=i;
+      o.value=i.name;
+      const state=i.usable ? 'READY' : (i.reason || 'UNAVAILABLE');
+      o.textContent=(i.display_name||i.name)+' · '+i.kind.toUpperCase()+' · '+state;
+      o.disabled=!i.usable;
       select.appendChild(o);
     });
-    if(current && interfaces.includes(current)) select.value=current;
+    if(current && details.some(i=>i.name===current && i.usable)) select.value=current;
+    else {
+      const ready=details.find(i=>i.usable);
+      if(ready) select.value=ready.name;
+    }
   }catch(e){}
 }
 
@@ -380,8 +386,11 @@ function connectLiveSocket(){
 }
 
 async function startLive(){
-  const iface=document.getElementById('interfaceSelect').value;
-  if(!iface){alert('Select a network interface first.');return}
+  const select=document.getElementById('interfaceSelect');
+  const iface=select.value;
+  if(!iface){alert('Select a usable network interface first.');return}
+  const option=select.options[select.selectedIndex];
+  if(option && option.disabled){alert('This interface is not suitable for live capture. Refresh the interface list.');return}
   try{
     const res=await fetch(LIVE_API+'/api/live/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interface:iface})});
     const data=await res.json();
