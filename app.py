@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import shutil
 import sys
 import time
 import urllib.error
@@ -68,6 +69,54 @@ def ensure_python_environment() -> None:
     print("[launcher] Python dependencies ready.")
 
 
+def ensure_capture_privileges() -> None:
+    """Relaunch the launcher with capture privileges when the OS requires them."""
+    if os.environ.get("AI_UD_PRIV_ESCALATED") == "1":
+        return
+
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except (AttributeError, OSError):
+            is_admin = False
+
+        if not is_admin:
+            print("[launcher] Live capture requires administrator privileges; requesting UAC...")
+            import ctypes
+
+            params = subprocess.list2cmdline([str(Path(__file__).resolve()), *sys.argv[1:]])
+            result = ctypes.windll.shell32.ShellExecuteW(
+                None,
+                "runas",
+                sys.executable,
+                params,
+                str(ROOT),
+                1,
+            )
+            if result <= 32:
+                raise RuntimeError("Windows elevation was denied or failed.")
+            raise SystemExit(0)
+        return
+
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        sudo = shutil.which("sudo")
+        if not sudo:
+            raise RuntimeError(
+                "Live packet capture requires root privileges. sudo was not found."
+            )
+
+        print("[launcher] Live capture requires elevated privileges; requesting sudo...")
+        env = os.environ.copy()
+        env["AI_UD_PRIV_ESCALATED"] = "1"
+        os.execvpe(
+            sudo,
+            [sudo, "-E", sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
+            env,
+        )
+
+
 def preflight():
     ensure_python_environment()
 
@@ -76,8 +125,7 @@ def preflight():
         raise RuntimeError("Zeek setup is incomplete: " + (result.message or "unknown installation error"))
     print("[launcher] Zeek ready (" + str(result.method) + ").")
 
-    if os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() != 0:
-        print("[launcher] WARNING: live capture may require capture permissions/capabilities.")
+    ensure_capture_privileges()
 
     required_imports = {
         "fastapi": "fastapi", "uvicorn": "uvicorn", "flask": "Flask",
