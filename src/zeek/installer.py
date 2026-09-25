@@ -154,8 +154,6 @@ class ZeekInstaller:
             ["apt-get", "install", "-y", "curl", "gnupg", "ca-certificates"],
             ["curl", "-fsSL", f"{repo}Release.key", "-o", key_download],
             ["gpg", "--dearmor", "--yes", "-o", key_file, key_download],
-            ["apt-get", "update"],
-            ["apt-get", "install", "-y", "zeek"],
         ]
 
         for command in commands:
@@ -172,6 +170,11 @@ class ZeekInstaller:
         result = self._run_linux(["tee", list_file], input="deb " + repo + " /\n")
         if result.returncode != 0:
             return InstallResult(False, self.system, "zeek-obs", "Could not configure the Zeek OBS repository.")
+
+        for command in (["apt-get", "update"], ["apt-get", "install", "-y", "zeek"]):
+            result = self._run_linux(command)
+            if result.returncode != 0:
+                return InstallResult(False, self.system, "zeek-obs", "Zeek OBS package installation failed.")
 
         if self._command_exists("zeek") or Path("/opt/zeek/bin/zeek").is_file():
             return InstallResult(True, self.system, "zeek-obs", f"Zeek installed from the official OBS repository: {repo}")
