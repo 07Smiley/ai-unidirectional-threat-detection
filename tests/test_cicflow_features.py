@@ -4,11 +4,13 @@ from src.features.cicflow_features import CICFlowExtractor
 
 
 def _packet(ts, src, dst, sport, dport, flags="A", payload=b"x" * 20):
-    return (
+    packet = (
         IP(src=src, dst=dst)
         / TCP(sport=sport, dport=dport, flags=flags)
         / payload
-    ).copy(time=ts)
+    )
+    packet.time = ts
+    return packet
 
 
 def test_bidirectional_flow_features():
