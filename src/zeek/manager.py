@@ -410,17 +410,20 @@ class ZeekManager:
 
         try:
             self.start(interface, startup_timeout=startup_timeout)
+            # A quiet interface may legitimately produce no conn.log records
+            # during the short smoke-test window. Process survival is the
+            # authoritative startup check; actual log records can arrive later.
             log_ready = self.wait_for_log("conn.log", timeout=log_timeout)
             if self.process is None or self.process.poll() is not None:
                 raise RuntimeError("Zeek exited during live-capture verification.")
             return {
-                "ready": bool(log_ready),
+                "ready": True,
                 "interface": interface,
                 "log_ready": bool(log_ready),
                 "message": (
                     "Zeek accepted the interface and conn.log is live."
                     if log_ready
-                    else "Zeek started, but conn.log did not receive data yet."
+                    else "Zeek accepted the interface; no traffic was observed during preflight."
                 ),
             }
         except Exception as exc:
