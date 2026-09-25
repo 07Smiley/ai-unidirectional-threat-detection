@@ -118,16 +118,31 @@ Linux package installation uses the local package manager when possible. Zeek al
 
 ### macOS
 
-Install dependencies and start the application:
+The normal entry point is:
+
+```bash
+python3 app.py
+```
+
+If Zeek is missing, the launcher automatically bootstraps Homebrew using Homebrew's official installer, then installs Zeek with:
+
+```bash
+brew install zeek
+```
+
+Homebrew currently provides a Zeek formula with macOS binary bottles, so the project does not need to build Zeek from source on macOS.
+
+The Homebrew bootstrap may still require normal macOS administrator authentication or Command Line Tools setup. Homebrew documents `NONINTERACTIVE=1` for unattended installer runs, but that does not bypass operating-system permission requirements.
+
+For development dependencies, create the virtual environment once:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python app.py
 ```
 
-The launcher can install Zeek with Homebrew when Homebrew is available. Live capture may require elevated packet-capture permissions.
+Live capture may require the appropriate packet-capture permissions.
 
 ### Windows
 
