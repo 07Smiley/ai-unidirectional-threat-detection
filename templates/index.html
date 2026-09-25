@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sentry — Behavioral DDoS Detection</title>
+<title>Sentry — Unidirectional Threat Detection</title>
 <style>
   :root{
     /* ---- Spasex design tokens ---- */
@@ -226,7 +226,7 @@
     </svg>
     <div class="brand-text">
       <h1>Sentry</h1>
-      <p>Behavioral DDoS detection, grouped by source</p>
+      <p>Passive unidirectional threat detection</p>
     </div>
   </div>
   <span class="model-badge" id="modelBadge">—</span>
@@ -317,11 +317,12 @@ async function loadLiveStatus(){
     document.getElementById('liveStop').disabled=!running;
     if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
     const loaded=(s.models&&s.models.loaded_models)||[];
-    const unavailable=(s.models&&s.models.unavailable_models)||{};
     const latest=(s.latest_ml)||{};
     latestThreatScore=Number(latest.score||0);
     latestMlPrediction=latest.prediction||null;
-    liveModelLabel = loaded.length ? 'LIVE · '+loaded.join(' + ') : 'RULES ONLY';
+    liveModelLabel = loaded.length
+      ? 'UNIDIRECTIONAL ML · '+loaded.length+' MODEL'+(loaded.length===1?'':'S')
+      : 'RULES ONLY · UNI ML READY';
     document.getElementById('modelBadge').textContent = liveModelLabel;
     if(running) connectLiveSocket();
     return s;
