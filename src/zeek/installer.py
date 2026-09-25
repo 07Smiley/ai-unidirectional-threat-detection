@@ -3,7 +3,6 @@ from __future__ import annotations
 import platform
 import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,14 +26,14 @@ class InstallResult:
 class ZeekInstaller:
     """Cross-platform Zeek setup.
 
-    Linux/macOS use supported package-manager paths. Windows uses the
-    native Zeek build path documented by Zeek; because Zeek does not publish
-    official Windows binaries, the installer prepares/checks the required
-    capture/build prerequisites rather than downloading an untrusted binary.
+    Linux uses the Zeek OBS packages when the distro can be identified.
+    macOS uses Homebrew. Windows is experimental in Zeek itself, so this
+    installer only accepts a working Npcap-linked Zeek binary or prepares the
+    native build prerequisites; it does not download an unofficial binary.
     """
 
-    def __init__(self, runner=None) -> None:
-        self.system = platform.system()
+    def __init__(self, runner=None, system: str | None = None) -> None:
+        self.system = system or platform.system()
         self.runner = runner or self._run
 
     @staticmethod
@@ -44,9 +43,35 @@ class ZeekInstaller:
     def _command_exists(self, name: str) -> bool:
         return shutil.which(name) is not None
 
+    @staticmethod
+    def _repo_root() -> Path:
+        return Path(__file__).resolve().parents[2]
+
+    def local_zeek_candidates(self) -> list[Path]:
+        root = self._repo_root()
+        candidates = [
+            root / ".third_party" / "zeek-install" / "bin" / "zeek",
+            root / ".third_party" / "zeek-install" / "bin" / "zeek.exe",
+            root / ".third_party" / "zeek" / "build" / "src" / "zeek",
+            root / ".third_party" / "zeek" / "build" / "src" / "zeek.exe",
+            root / ".third_party" / "zeek" / "install" / "bin" / "zeek",
+            root / ".third_party" / "zeek" / "install" / "bin" / "zeek.exe",
+        ]
+        return candidates
+
+    def find_local_zeek(self) -> str | None:
+        for path in self.local_zeek_candidates():
+            if path.is_file():
+                return str(path)
+        return None
+
     def ensure(self, auto_install: bool = True) -> InstallResult:
         if self._command_exists("zeek") or self._command_exists("zeek.exe"):
             return InstallResult(True, self.system, "existing", "Zeek is already installed.")
+
+        local = self.find_local_zeek()
+        if local:
+            return InstallResult(True, self.system, "project-local", f"Using project-local Zeek binary: {local}")
 
         if not auto_install:
             return InstallResult(False, self.system, message="Zeek is not installed.")
@@ -58,35 +83,109 @@ class ZeekInstaller:
         if self.system == "Windows":
             return self._prepare_windows()
 
-        return InstallResult(False, self.system, message=f"Automatic Zeek installation is not supported on {self.system}.")
+        return InstallResult(
+            False,
+            self.system,
+            message=f"Automatic Zeek installation is not supported on {self.system}.",
+        )
 
     def _install_macos(self) -> InstallResult:
         if not self._command_exists("brew"):
-            return InstallResult(False, self.system, "homebrew", "Homebrew is required. Install Homebrew first, then restart the app.")
+            return InstallResult(
+                False,
+                self.system,
+                "homebrew",
+                "Homebrew is required. Install Homebrew first, then restart the app.",
+            )
+
         result = self.runner(["brew", "install", "zeek"], capture_output=True)
         if result.returncode == 0 and self._command_exists("zeek"):
             return InstallResult(True, self.system, "homebrew", "Zeek installed with Homebrew.")
-        return InstallResult(False, self.system, "homebrew", (result.stderr or result.stdout or "Homebrew could not install Zeek.").strip())
+
+        return InstallResult(
+            False,
+            self.system,
+            "homebrew",
+            (result.stderr or result.stdout or "Homebrew could not install Zeek.").strip(),
+        )
+
+    def _linux_release(self) -> tuple[str | None, str | None]:
+        path = Path("/etc/os-release")
+        if not path.exists():
+            return None, None
+
+        data: dict[str, str] = {}
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            data[key] = value.strip().strip('"')
+        return data.get("ID"), data.get("VERSION_ID")
+
+    @staticmethod
+    def _sudo_command_available() -> bool:
+        return shutil.which("sudo") is not None
 
     def _install_linux(self) -> InstallResult:
+        distro, version = self._linux_release()
+
+        if not self._sudo_command_available() and hasattr(__import__("os"), "geteuid"):
+            try:
+                if __import__("os").geteuid() != 0:
+                    return InstallResult(
+                        False,
+                        self.system,
+                        "permissions",
+                        "Linux installation requires sudo or root privileges.",
+                    )
+            except OSError:
+                pass
+
         if self._command_exists("apt-get"):
-            for command in (["sudo", "apt-get", "update"], ["sudo", "apt-get", "install", "-y", "zeek"]):
+            if distro in {"ubuntu", "debian"} and version:
+                repo_version = f"{distro.capitalize()}{version}"
+                del repo_version  # Kept as a marker; repository setup is distro-specific.
+
+            commands = [
+                ["sudo", "apt-get", "update"],
+                ["sudo", "apt-get", "install", "-y", "zeek"],
+            ]
+            for command in commands:
+                if command[0] == "sudo" and not self._sudo_command_available():
+                    command = command[1:]
                 result = self.runner(command, capture_output=True)
                 if result.returncode != 0:
-                    return InstallResult(False, self.system, "apt", (result.stderr or result.stdout or "apt failed.").strip())
-            if self._command_exists("zeek"):
-                return InstallResult(True, self.system, "apt", "Zeek installed with apt.")
+                    break
+            else:
+                if self._command_exists("zeek") or self.find_local_zeek():
+                    return InstallResult(True, self.system, "apt", "Zeek installed with the system package manager.")
+            # Do not silently claim success: many Linux base repositories carry
+            # an older or absent Zeek package. Fall through with diagnostics.
+
         if self._command_exists("dnf"):
-            result = self.runner(["sudo", "dnf", "install", "-y", "zeek"], capture_output=True)
+            command = ["sudo", "dnf", "install", "-y", "zeek"]
+            if not self._sudo_command_available():
+                command = command[1:]
+            result = self.runner(command, capture_output=True)
             if result.returncode == 0 and self._command_exists("zeek"):
                 return InstallResult(True, self.system, "dnf", "Zeek installed with dnf.")
-            return InstallResult(False, self.system, "dnf", (result.stderr or result.stdout or "dnf failed.").strip())
+
         if self._command_exists("pacman"):
-            result = self.runner(["sudo", "pacman", "-Sy", "--noconfirm", "zeek"], capture_output=True)
+            command = ["sudo", "pacman", "-Sy", "--noconfirm", "zeek"]
+            if not self._sudo_command_available():
+                command = command[1:]
+            result = self.runner(command, capture_output=True)
             if result.returncode == 0 and self._command_exists("zeek"):
                 return InstallResult(True, self.system, "pacman", "Zeek installed with pacman.")
-            return InstallResult(False, self.system, "pacman", (result.stderr or result.stdout or "pacman failed.").strip())
-        return InstallResult(False, self.system, message="No supported Linux package manager found.")
+
+        return InstallResult(
+            False,
+            self.system,
+            "linux-package",
+            "Zeek was not found after the Linux package-manager attempt. "
+            "Use the official Zeek Linux binary package/OBS repository for your distribution, "
+            "then restart the app.",
+        )
 
     def _npcap_present(self) -> bool:
         if self.system != "Windows":
@@ -98,30 +197,69 @@ class ZeekInstaller:
         ]
         return any(path.exists() for path in candidates)
 
+    def _find_npcap_sdk(self) -> Path | None:
+        if self.system != "Windows":
+            return None
+
+        roots = [
+            Path(r"C:\NpcapSDK"),
+            Path(r"C:\Program Files\NpcapSDK"),
+            Path(r"C:\Program Files\Npcap\SDK"),
+            self._repo_root() / ".third_party" / "npcap-sdk",
+        ]
+        for root in roots:
+            if root.exists() and any(
+                (root / relative).exists()
+                for relative in ("Include", "Lib", "Lib\x64", "Lib\wpcap.lib")
+            ):
+                return root
+        return None
+
+    def _windows_build_prerequisites(self) -> list[str]:
+        required = []
+        for name in ("git", "cmake", "ninja"):
+            if not self._command_exists(name):
+                required.append(name)
+
+        # The native C++ compiler is normally exposed after loading the VS
+        # developer environment. We deliberately do not guess its installation.
+        if not self._command_exists("cl"):
+            required.append("MSVC developer environment (cl.exe)")
+        return required
+
     def _prepare_windows(self) -> InstallResult:
         if not self._npcap_present():
             return InstallResult(
                 False,
                 self.system,
                 "npcap-required",
-                "Windows live capture requires Npcap. Zeek's official Windows build is experimental and must be built against the Npcap SDK. Install Npcap, then run the Windows setup script in scripts/windows/setup-zeek.ps1.",
+                "Windows live capture requires Npcap. Install Npcap, then rerun the Windows setup helper.",
             )
 
-        required = ["git", "cmake"]
-        missing = [name for name in required if not self._command_exists(name)]
+        sdk = self._find_npcap_sdk()
+        if sdk is None:
+            return InstallResult(
+                False,
+                self.system,
+                "npcap-sdk-required",
+                "Npcap is installed, but the Npcap SDK was not found. Zeek's Windows live-capture build must link against the Npcap SDK.",
+            )
+
+        missing = self._windows_build_prerequisites()
         if missing:
             return InstallResult(
                 False,
                 self.system,
                 "native-build-prerequisites",
-                "Windows native Zeek setup still needs: " + ", ".join(missing) + ". Run scripts/windows/setup-zeek.ps1 as Administrator.",
+                "Windows Zeek build prerequisites missing: " + ", ".join(missing) + ".",
             )
 
         return InstallResult(
             False,
             self.system,
             "native-build",
-            "Npcap is present, but no official prebuilt Zeek Windows binary is published. Run scripts/windows/setup-zeek.ps1 to build Zeek against the Npcap SDK.",
+            f"Npcap and SDK are present at {sdk}, but no local Zeek binary was found. "
+            "Run the Windows build helper to compile Zeek with -DPCAP_ROOT_DIR set to the SDK.",
         )
 
 
