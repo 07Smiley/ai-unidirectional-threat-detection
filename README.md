@@ -98,6 +98,8 @@ Combine directionality, rate, entropy, protocol metadata and model confidence in
 
 ## Setup
 
+The launcher performs a Zeek preflight before starting the dashboard. Live capture is only considered ready after Zeek is started on the selected interface and the live `conn.log` path is verified.
+
 ### Linux
 
 Install Python dependencies:
@@ -112,7 +114,40 @@ Then start the application:
 python app.py
 ```
 
-For live interface capture, Zeek may require appropriate packet-capture privileges depending on the system configuration.
+Linux package installation uses the local package manager when possible. Zeek also publishes official Linux binary packages through the openSUSE Build Service; some distributions may need that repository configured manually. Live packet capture still requires the appropriate privileges.
+
+### macOS
+
+Install dependencies and start the application:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python app.py
+```
+
+The launcher can install Zeek with Homebrew when Homebrew is available. Live capture may require elevated packet-capture permissions.
+
+### Windows
+
+Zeek's native Windows support is **experimental**. Live capture requires both the Npcap runtime and a Zeek build linked against the Npcap SDK; the normal Windows libpcap build is not sufficient for live capture. The project does not redistribute an unofficial Zeek binary or Npcap SDK.
+
+Run PowerShell as Administrator:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\\scripts\\windows\\setup-zeek.ps1
+```
+
+The helper installs/uses the build prerequisites it can automate, checks for Npcap, finds the Npcap SDK, configures Zeek with `-DPCAP_ROOT_DIR`, and builds a project-local `zeek.exe`. After the build, start the app normally:
+
+```powershell
+python app.py
+```
+
+The app automatically detects the project-local Windows Zeek binary. You still need a valid Npcap installation, Npcap SDK, and supported Visual Studio/MSVC developer environment; those are external Windows prerequisites.
+
 
 Open the dashboard at:
 
@@ -175,7 +210,7 @@ source .venv/bin/activate
 pytest -q
 ```
 
-A real deployment should also be tested with a real network interface and controlled traffic.
+The Zeek manager also has a live-capture smoke check that starts Zeek on a selected interface, verifies the live `conn.log` path, and cleans the sensor up again. This is stronger than checking only `zeek --version`, but a real deployment still needs a real-NIC test with controlled traffic on each target operating system.
 
 ## Security notes
 
