@@ -90,18 +90,93 @@ class ZeekInstaller:
             message=f"Automatic Zeek installation is not supported on {self.system}.",
         )
 
-    def _install_macos(self) -> InstallResult:
-        if not self._command_exists("brew"):
+    def _find_brew(self) -> str | None:
+        for candidate in (
+            shutil.which("brew"),
+            "/opt/homebrew/bin/brew",
+            "/usr/local/bin/brew",
+        ):
+            if candidate and Path(candidate).is_file():
+                return str(candidate)
+        return None
+
+    def _install_homebrew(self) -> InstallResult:
+        curl = shutil.which("curl")
+        bash = "/bin/bash"
+        if not curl or not Path(bash).is_file():
             return InstallResult(
                 False,
                 self.system,
                 "homebrew",
-                "Homebrew is required. Install Homebrew first, then restart the app.",
+                "macOS needs curl and /bin/bash to bootstrap Homebrew.",
             )
 
-        result = self.runner(["brew", "install", "zeek"], capture_output=True)
-        if result.returncode == 0 and self._command_exists("zeek"):
-            return InstallResult(True, self.system, "homebrew", "Zeek installed with Homebrew.")
+        installer = Path("/tmp/ai_unidirectional_homebrew_install.sh")
+        download = self.runner(
+            [curl, "-fsSL", "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh", "-o", str(installer)],
+            capture_output=True,
+        )
+        if download.returncode != 0:
+            return InstallResult(
+                False,
+                self.system,
+                "homebrew",
+                (download.stderr or download.stdout or "Could not download the official Homebrew installer.").strip(),
+            )
+
+        try:
+            result = self.runner(
+                [bash, str(installer)],
+                env={**os.environ, "NONINTERACTIVE": "1"},
+                capture_output=True,
+            )
+        finally:
+            try:
+                installer.unlink()
+            except FileNotFoundError:
+                pass
+
+        brew = self._find_brew()
+        if result.returncode == 0 and brew:
+            return InstallResult(True, self.system, "homebrew-bootstrap", f"Homebrew is ready at {brew}.")
+
+        output = "\n".join(
+            part.strip()
+            for part in (
+                getattr(result, "stderr", "") or "",
+                getattr(result, "stdout", "") or "",
+            )
+            if part and part.strip()
+        )
+        return InstallResult(
+            False,
+            self.system,
+            "homebrew-bootstrap",
+            output or "Homebrew bootstrap did not complete successfully.",
+        )
+
+    def _install_macos(self) -> InstallResult:
+        brew = self._find_brew()
+        if not brew:
+            bootstrap = self._install_homebrew()
+            if not bootstrap.installed:
+                return bootstrap
+            brew = self._find_brew()
+
+        if not brew:
+            return InstallResult(False, self.system, "homebrew", "Homebrew was installed but could not be located.")
+
+        result = self.runner([brew, "install", "zeek"], capture_output=True)
+        zeek = shutil.which("zeek")
+        if not zeek:
+            for prefix in ("/opt/homebrew", "/usr/local"):
+                candidate = Path(prefix) / "bin" / "zeek"
+                if candidate.is_file():
+                    zeek = str(candidate)
+                    break
+
+        if result.returncode == 0 and zeek:
+            return InstallResult(True, self.system, "homebrew", f"Zeek installed with Homebrew: {zeek}")
 
         return InstallResult(
             False,
