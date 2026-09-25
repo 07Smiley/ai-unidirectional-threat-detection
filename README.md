@@ -131,7 +131,7 @@ The launcher can install Zeek with Homebrew when Homebrew is available. Live cap
 
 ### Windows
 
-Zeek's native Windows support is **experimental**. Live capture requires Npcap and a Zeek build linked against the Npcap SDK; the normal Windows libpcap build is not sufficient for live capture. Zeek documents the Windows build as experimental and specifically requires Npcap for live-interface capture. citeturn1search3
+Zeek's native Windows support is **experimental**. Live capture requires Npcap and a Zeek build linked against the Npcap SDK; the normal Windows libpcap build is not sufficient for live capture. Zeek documents the Windows build as experimental and specifically requires Npcap for live-interface capture.
 
 The normal entry point is now:
 
@@ -151,7 +151,7 @@ If Zeek is missing, `app.py` automatically launches the project Windows bootstra
 - configure Zeek with `-DPCAP_ROOT_DIR` for Npcap;
 - build a project-local `.third_party\\zeek\\build\\src\\zeek.exe`.
 
-Microsoft documents WinGet/Build Tools command-line installation, and Npcap documents that the free edition uses an installer while silent installation is an OEM-only feature. citeturn2search0turn0search4
+Microsoft documents WinGet/Build Tools command-line installation, and Npcap documents that the free edition uses an installer while silent installation is an OEM-only feature.
 
 **One unavoidable manual step:** the free Npcap installer can show its normal installer/UAC prompts. We do not redistribute Npcap or embed it in this repository. After that prompt is completed, the bootstrap continues automatically.
 
