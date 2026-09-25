@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Callable
@@ -72,6 +73,37 @@ class LivePacketCapture:
         while not self._stop_event.wait(self.poll_interval):
             self._emit_completed()
 
+    def _diagnose_start_error(self, exc: Exception) -> str:
+        detail = str(exc).strip() or exc.__class__.__name__
+        lower = detail.lower()
+
+        if os.name == "nt":
+            if any(token in lower for token in ("npcap", "wpcap", "winpcap", "pcap")):
+                return (
+                    f"Windows packet capture failed on '{self.interface}': {detail}. "
+                    "Check that Npcap is installed and that this Zeek/Scapy environment "
+                    "can access its capture driver."
+                )
+            if any(token in lower for token in ("permission", "access is denied", "access denied")):
+                return (
+                    f"Windows denied packet capture on '{self.interface}': {detail}. "
+                    "Restart the launcher as Administrator and verify Npcap is installed."
+                )
+
+        if any(token in lower for token in ("permission", "operation not permitted", "permission denied", "eacces")):
+            return (
+                f"Packet capture permission was denied on '{self.interface}': {detail}. "
+                "Run the launcher with the required capture privileges."
+            )
+
+        if any(token in lower for token in ("no such device", "interface", "not found")):
+            return (
+                f"Packet capture could not open interface '{self.interface}': {detail}. "
+                "Refresh the interface list and select an active network adapter."
+            )
+
+        return f"Packet capture failed on '{self.interface}': {detail}"
+
     def start(self) -> None:
         if self.running:
             raise RuntimeError("Packet capture is already running.")
@@ -84,7 +116,12 @@ class LivePacketCapture:
             store=False,
             filter=self.bpf_filter,
         )
-        self._sniffer.start()
+        try:
+            self._sniffer.start()
+        except Exception as exc:
+            self._sniffer = None
+            self._error = self._diagnose_start_error(exc)
+            raise RuntimeError(self._error) from exc
 
         self._monitor_thread = threading.Thread(
             target=self._monitor,
