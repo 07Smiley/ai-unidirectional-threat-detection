@@ -74,9 +74,10 @@ def _stats(values: list[float]) -> tuple[float, float, float, float]:
 
 
 def _iat_stats(times: list[float]) -> tuple[float, float, float, float, float]:
+    """Return IAT statistics in microseconds, matching CICFlowMeter semantics."""
     if len(times) < 2:
         return 0.0, 0.0, 0.0, 0.0, 0.0
-    gaps = np.diff(times).astype(float).tolist()
+    gaps = (np.diff(times).astype(float) * 1_000_000.0).tolist()
     return (
         float(sum(gaps)),
         float(mean(gaps)),
