@@ -3,14 +3,20 @@ from types import SimpleNamespace
 from src.zeek.installer import ZeekInstaller
 
 
-def test_windows_installer_requires_npcap(monkeypatch):
+def test_windows_installer_runs_bootstrap(monkeypatch):
     installer = ZeekInstaller(system="Windows")
-    monkeypatch.setattr(installer, "_npcap_present", lambda: False)
+    monkeypatch.setattr(
+        installer,
+        "_run_windows_setup",
+        lambda: __import__("src.zeek.installer", fromlist=["InstallResult"]).InstallResult(
+            True, "Windows", "windows-bootstrap", "ok"
+        ),
+    )
 
     result = installer.ensure(auto_install=True)
 
-    assert result.installed is False
-    assert result.method == "npcap-required"
+    assert result.installed is True
+    assert result.method == "windows-bootstrap"
 
 
 def test_windows_installer_accepts_project_local_binary(tmp_path, monkeypatch):
