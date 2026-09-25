@@ -58,14 +58,68 @@ if (-not (Test-Path (Join-Path $source ".git"))) {
 
 Write-Host ""
 Write-Host "Zeek source is ready."
-Write-Host "The remaining build step requires the Npcap SDK and a supported MSVC"
-Write-Host "environment, as documented by Zeek. This script intentionally does not"
-Write-Host "download or redistribute the Npcap SDK or an unofficial Zeek binary."
 Write-Host ""
-Write-Host "Source: $source"
-Write-Host "Build : $build"
+$npcapSdkCandidates = @(
+    "C:\NpcapSDK",
+    "C:\Program Files\NpcapSDK",
+    "C:\Program Files\Npcap\SDK",
+    (Join-Path $root ".third_party\npcap-sdk")
+)
+$npcapSdk = $null
+foreach ($candidate in $npcapSdkCandidates) {
+    if ((Test-Path (Join-Path $candidate "Include")) -and (Test-Path (Join-Path $candidate "Lib"))) {
+        $npcapSdk = $candidate
+        break
+    }
+}
+
+if (-not $npcapSdk) {
+    Write-Host "Npcap runtime is installed, but the Npcap SDK was not found."
+    Write-Host "Zeek documents that Windows live capture requires building against the Npcap SDK."
+    Write-Host "Download the SDK from the official Npcap site, extract it, and rerun this script."
+    Start-Process "https://npcap.com/#download"
+    exit 1
+}
+
+if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
+    Write-Host "MSVC cl.exe is not available in this PowerShell session."
+    Write-Host "Open a Visual Studio Developer PowerShell/Command Prompt and rerun this script."
+    exit 1
+}
+
+New-Item -ItemType Directory -Force -Path $build | Out-Null
+Push-Location $build
+try {
+    $configure = @(
+        "cmake.exe",
+        "..",
+        "-DCMAKE_BUILD_TYPE=release",
+        "-DENABLE_ZEEK_UNIT_TESTS=yes",
+        "-DENABLE_CLUSTER_BACKEND_ZEROMQ=no",
+        '-DVCPKG_TARGET_TRIPLET=x64-windows-static',
+        "-G",
+        "Ninja",
+        "-DPCAP_ROOT_DIR=$npcapSdk"
+    )
+    Write-Host "Configuring Zeek with Npcap SDK: $npcapSdk"
+    & $configure[0] $configure[1..($configure.Count - 1)]
+    if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed." }
+
+    Write-Host "Building Zeek..."
+    & cmake.exe --build .
+    if ($LASTEXITCODE -ne 0) { throw "Zeek build failed." }
+}
+finally {
+    Pop-Location
+}
+
+$binary = Join-Path $build "src\zeek.exe"
+if (-not (Test-Path $binary)) {
+    throw "Build completed without producing $binary"
+}
+
 Write-Host ""
-Write-Host "After installing the Npcap SDK and Visual Studio Build Tools, configure:"
-Write-Host 'cmake.exe .. -DCMAKE_BUILD_TYPE=release -DENABLE_ZEEK_UNIT_TESTS=yes -DENABLE_CLUSTER_BACKEND_ZEROMQ=no -DVCPKG_TARGET_TRIPLET="x64-windows-static" -G Ninja -DPCAP_ROOT_DIR="<Npcap SDK path>"'
-Write-Host "Then:"
-Write-Host "cmake.exe --build ."
+Write-Host "Zeek Windows build completed:"
+Write-Host "  $binary"
+Write-Host ""
+Write-Host "The application will detect this project-local binary automatically."
