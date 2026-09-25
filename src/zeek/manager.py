@@ -196,6 +196,33 @@ class ZeekManager:
             error=error,
         )
 
+    def _diagnose_start_error(self, detail: str) -> str:
+        detail = (detail or "").strip()
+        lower = detail.lower()
+
+        if "permission" in lower or "operation not permitted" in lower or "access denied" in lower:
+            return (
+                f"Zeek could not capture interface '{self.interface or 'selected interface'}': "
+                f"{detail or 'permission denied'}. "
+                "Run the launcher with the required packet-capture privileges."
+            )
+
+        if os.name == "nt" and any(token in lower for token in ("npcap", "wpcap", "pcap", "winpcap")):
+            return (
+                f"Zeek could not open Windows capture interface '{self.interface or 'selected interface'}': "
+                f"{detail}. Verify that Npcap is installed and that this Zeek build was linked "
+                "against the Npcap SDK."
+            )
+
+        if any(token in lower for token in ("interface", "device", "no such", "not found")):
+            return (
+                f"Zeek could not open interface '{self.interface or 'selected interface'}': "
+                f"{detail or 'device was not found'}. "
+                "Refresh the interface list and choose an active adapter."
+            )
+
+        return f"Zeek failed to start on '{self.interface or 'selected interface'}': {detail or 'unknown error'}"
+
     def start(self, interface: str, startup_timeout: float = 5.0) -> ZeekStatus:
         if not self.ensure_installed():
             raise RuntimeError(
@@ -240,7 +267,7 @@ class ZeekManager:
                 error = self.process.stderr.read().strip() if self.process.stderr else ""
                 self.process = None
                 self.interface = None
-                raise RuntimeError(f"Zeek failed to start{': ' + error if error else '.'}")
+                raise RuntimeError(self._diagnose_start_error(error))
             if self.log_dir.exists():
                 break
             time.sleep(0.1)
