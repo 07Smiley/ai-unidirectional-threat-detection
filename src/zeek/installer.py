@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
@@ -126,55 +127,77 @@ class ZeekInstaller:
     def _sudo_command_available() -> bool:
         return shutil.which("sudo") is not None
 
+    def _linux_privileged(self, command: list[str]) -> list[str]:
+        if os.geteuid() == 0:
+            return command
+        if self._sudo_command_available():
+            return ["sudo", *command]
+        raise RuntimeError("Linux installation requires root or sudo privileges.")
+
+    def _run_linux(self, command: list[str]):
+        return self.runner(self._linux_privileged(command), capture_output=True)
+
+    def _install_apt_zeek(self, distro: str | None, version: str | None) -> InstallResult | None:
+        if distro not in {"ubuntu", "debian"} or not version:
+            return None
+
+        if distro == "ubuntu":
+            repo = f"https://download.opensuse.org/repositories/security:/zeek/xUbuntu_{version}/"
+        else:
+            repo = f"https://download.opensuse.org/repositories/security:/zeek/Debian_{version}/"
+
+        list_file = "/etc/apt/sources.list.d/security:zeek.list"
+        key_file = "/etc/apt/trusted.gpg.d/security_zeek.gpg"
+        key_download = "/tmp/security_zeek_release.key"
+
+        commands = [
+            ["apt-get", "install", "-y", "curl", "gnupg", "ca-certificates"],
+            ["curl", "-fsSL", f"{repo}Release.key", "-o", key_download],
+            ["gpg", "--dearmor", "--yes", "-o", key_file, key_download],
+            ["apt-get", "update"],
+            ["apt-get", "install", "-y", "zeek"],
+        ]
+
+        for command in commands:
+            result = self._run_linux(command)
+            if result.returncode != 0:
+                return InstallResult(
+                    False,
+                    self.system,
+                    "zeek-obs",
+                    (result.stderr or result.stdout or f"Command failed: {' '.join(command)}").strip(),
+                )
+
+        # Write the repository file without invoking a shell.
+        result = self._run_linux(["tee", list_file])
+        if result.returncode != 0:
+            return InstallResult(False, self.system, "zeek-obs", "Could not configure the Zeek OBS repository.")
+
+        if self._command_exists("zeek") or Path("/opt/zeek/bin/zeek").is_file():
+            return InstallResult(True, self.system, "zeek-obs", f"Zeek installed from the official OBS repository: {repo}")
+        return None
+
     def _install_linux(self) -> InstallResult:
         distro, version = self._linux_release()
 
-        if not self._sudo_command_available() and hasattr(__import__("os"), "geteuid"):
-            try:
-                if __import__("os").geteuid() != 0:
-                    return InstallResult(
-                        False,
-                        self.system,
-                        "permissions",
-                        "Linux installation requires sudo or root privileges.",
-                    )
-            except OSError:
-                pass
-
         if self._command_exists("apt-get"):
-            if distro in {"ubuntu", "debian"} and version:
-                repo_version = f"{distro.capitalize()}{version}"
-                del repo_version  # Kept as a marker; repository setup is distro-specific.
+            official = self._install_apt_zeek(distro, version)
+            if official and official.installed:
+                return official
 
-            commands = [
-                ["sudo", "apt-get", "update"],
-                ["sudo", "apt-get", "install", "-y", "zeek"],
-            ]
-            for command in commands:
-                if command[0] == "sudo" and not self._sudo_command_available():
-                    command = command[1:]
-                result = self.runner(command, capture_output=True)
-                if result.returncode != 0:
-                    break
-            else:
-                if self._command_exists("zeek") or self.find_local_zeek():
+            result = self._run_linux(["apt-get", "update"])
+            if result.returncode == 0:
+                result = self._run_linux(["apt-get", "install", "-y", "zeek"])
+                if result.returncode == 0 and (self._command_exists("zeek") or self.find_local_zeek()):
                     return InstallResult(True, self.system, "apt", "Zeek installed with the system package manager.")
-            # Do not silently claim success: many Linux base repositories carry
-            # an older or absent Zeek package. Fall through with diagnostics.
 
         if self._command_exists("dnf"):
-            command = ["sudo", "dnf", "install", "-y", "zeek"]
-            if not self._sudo_command_available():
-                command = command[1:]
-            result = self.runner(command, capture_output=True)
+            result = self._run_linux(["dnf", "install", "-y", "zeek"])
             if result.returncode == 0 and self._command_exists("zeek"):
                 return InstallResult(True, self.system, "dnf", "Zeek installed with dnf.")
 
         if self._command_exists("pacman"):
-            command = ["sudo", "pacman", "-Sy", "--noconfirm", "zeek"]
-            if not self._sudo_command_available():
-                command = command[1:]
-            result = self.runner(command, capture_output=True)
+            result = self._run_linux(["pacman", "-Sy", "--noconfirm", "zeek"])
             if result.returncode == 0 and self._command_exists("zeek"):
                 return InstallResult(True, self.system, "pacman", "Zeek installed with pacman.")
 
@@ -182,9 +205,7 @@ class ZeekInstaller:
             False,
             self.system,
             "linux-package",
-            "Zeek was not found after the Linux package-manager attempt. "
-            "Use the official Zeek Linux binary package/OBS repository for your distribution, "
-            "then restart the app.",
+            "Zeek could not be installed automatically for this Linux distribution.",
         )
 
     def _npcap_present(self) -> bool:
