@@ -156,17 +156,20 @@ class CICFlowExtractor:
             proto = "tcp"
             src_port, dst_port = int(layer.sport), int(layer.dport)
             header_len = int(layer.dataofs or 5) * 4
+            payload_bytes = int(len(layer.payload))
             flags = str(layer.flags)
         elif UDP in packet:
             layer = packet[UDP]
             proto = "udp"
             src_port, dst_port = int(layer.sport), int(layer.dport)
             header_len = 8
+            payload_bytes = int(len(layer.payload))
             flags = ""
         else:
             proto = str(packet[IP].proto)
             src_port = dst_port = 0
             header_len = int(packet[IP].ihl or 5) * 4
+            payload_bytes = max(int(len(packet[IP].payload)), 0)
             flags = ""
 
         return (
@@ -176,7 +179,7 @@ class CICFlowExtractor:
             src_port,
             dst_port,
             proto,
-            int(len(packet)),
+            payload_bytes,
             header_len,
             flags,
         )
@@ -186,7 +189,7 @@ class CICFlowExtractor:
         if parts is None:
             return
 
-        ts, src, dst, src_port, dst_port, proto, size, header_len, flags = parts
+        ts, src, dst, src_port, dst_port, proto, payload_bytes, header_len, flags = parts
         key = (src, dst, src_port, dst_port, proto)
         reverse = (dst, src, dst_port, src_port, proto)
 
@@ -209,7 +212,7 @@ class CICFlowExtractor:
             self._flows[key] = state
             forward = True
 
-        state.add(ts, size, forward, header_len, flags)
+        state.add(ts, payload_bytes, forward, header_len, flags)
 
     def rows(self) -> list[dict[str, Any]]:
         return [self._row(state) for state in self._flows.values()]
