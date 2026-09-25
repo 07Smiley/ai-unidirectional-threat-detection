@@ -70,6 +70,17 @@ class ZeekInstaller:
         if self._command_exists("zeek") or self._command_exists("zeek.exe"):
             return InstallResult(True, self.system, "existing", "Zeek is already installed.")
 
+        # Debian/Ubuntu Zeek packages commonly install under /opt/zeek/bin,
+        # which may not be present in sudo's secure PATH.
+        for candidate in (
+            Path("/opt/zeek/bin/zeek"),
+            Path("/opt/zeek/bin/zeek.exe"),
+            Path("/usr/local/bin/zeek"),
+            Path("/usr/bin/zeek"),
+        ):
+            if candidate.is_file():
+                return InstallResult(True, self.system, "existing", f"Zeek is already installed at {candidate}.")
+
         local = self.find_local_zeek()
         if local:
             return InstallResult(True, self.system, "project-local", f"Using project-local Zeek binary: {local}")
