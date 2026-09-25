@@ -142,7 +142,7 @@ def preflight():
         raise RuntimeError("Missing Python dependencies after installation: " + ", ".join(sorted(set(missing))))
 
 
-def wait_for_url(url, process, name, timeout=15.0):
+def wait_for_url(url, process, name, timeout=60.0):
     deadline = time.monotonic() + timeout
     last_error = None
     while time.monotonic() < deadline:
@@ -185,14 +185,24 @@ def main():
             "FastAPI backend",
         )
         processes.append(("FastAPI backend", backend))
-        wait_for_url("http://" + BACKEND_HOST + ":" + BACKEND_PORT + "/health", backend, "FastAPI backend")
+        wait_for_url(
+            "http://" + BACKEND_HOST + ":" + BACKEND_PORT + "/health",
+            backend,
+            "FastAPI backend",
+            timeout=60.0,
+        )
 
         dashboard_env = os.environ.copy()
         dashboard_env["DASHBOARD_HOST"] = DASHBOARD_HOST
         dashboard_env["DASHBOARD_PORT"] = DASHBOARD_PORT
         dashboard = start_process([PYTHON, "dashboard.py"], "Sentry dashboard", dashboard_env)
         processes.append(("Sentry dashboard", dashboard))
-        wait_for_url("http://" + DASHBOARD_HOST + ":" + DASHBOARD_PORT + "/", dashboard, "Sentry dashboard")
+        wait_for_url(
+            "http://" + DASHBOARD_HOST + ":" + DASHBOARD_PORT + "/",
+            dashboard,
+            "Sentry dashboard",
+            timeout=30.0,
+        )
 
         print("\n[launcher] AI Unidirectional Threat Detection is ready.")
         print("[launcher] Dashboard: http://" + DASHBOARD_HOST + ":" + DASHBOARD_PORT)
