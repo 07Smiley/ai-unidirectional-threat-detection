@@ -82,3 +82,21 @@ def test_windows_bootstrap_accepts_successful_local_build(tmp_path, monkeypatch)
 
     assert result.installed is True
     assert result.method == "windows-bootstrap"
+
+
+def test_linux_ubuntu_uses_official_obs_repository(monkeypatch):
+    installer = ZeekInstaller(system="Linux")
+    monkeypatch.setattr(installer, "_linux_release", lambda: ("ubuntu", "24.04"))
+    monkeypatch.setattr(installer, "_command_exists", lambda name: name in {"apt-get", "zeek"})
+    monkeypatch.setattr(installer, "_sudo_command_available", lambda: True)
+    monkeypatch.setattr(installer, "_linux_privileged", lambda command: command)
+    commands = []
+    installer.runner = lambda command, **kwargs: (
+        commands.append((command, kwargs)) or SimpleNamespace(returncode=0, stdout="", stderr="")
+    )
+
+    result = installer.ensure(auto_install=True)
+
+    assert result.installed is True
+    assert result.method == "zeek-obs"
+    assert any("download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/" in " ".join(command) for command, _ in commands)
