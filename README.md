@@ -131,22 +131,42 @@ The launcher can install Zeek with Homebrew when Homebrew is available. Live cap
 
 ### Windows
 
-Zeek's native Windows support is **experimental**. Live capture requires both the Npcap runtime and a Zeek build linked against the Npcap SDK; the normal Windows libpcap build is not sufficient for live capture. The project does not redistribute an unofficial Zeek binary or Npcap SDK.
+Zeek's native Windows support is **experimental**. Live capture requires Npcap and a Zeek build linked against the Npcap SDK; the normal Windows libpcap build is not sufficient for live capture. Zeek documents the Windows build as experimental and specifically requires Npcap for live-interface capture. citeturn1search3
 
-Run PowerShell as Administrator:
+The normal entry point is now:
+
+```powershell
+python app.py
+```
+
+If Zeek is missing, `app.py` automatically launches the project Windows bootstrap. The bootstrap can:
+
+- request UAC elevation;
+- enable Windows Developer Mode needed by Zeek's source symlinks;
+- install Git, CMake, and Ninja through WinGet;
+- install Microsoft Visual Studio Build Tools with the C++ workload through WinGet;
+- download the official Npcap installer and wait for its interactive installation;
+- download and extract the official Npcap SDK;
+- clone Zeek with submodules;
+- configure Zeek with `-DPCAP_ROOT_DIR` for Npcap;
+- build a project-local `.third_party\\zeek\\build\\src\\zeek.exe`.
+
+Microsoft documents WinGet/Build Tools command-line installation, and Npcap documents that the free edition uses an installer while silent installation is an OEM-only feature. citeturn2search0turn0search4
+
+**One unavoidable manual step:** the free Npcap installer can show its normal installer/UAC prompts. We do not redistribute Npcap or embed it in this repository. After that prompt is completed, the bootstrap continues automatically.
+
+You can also run the helper directly:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\\scripts\\windows\\setup-zeek.ps1
 ```
 
-The helper installs/uses the build prerequisites it can automate, checks for Npcap, finds the Npcap SDK, configures Zeek with `-DPCAP_ROOT_DIR`, and builds a project-local `zeek.exe`. After the build, start the app normally:
+Once Zeek is built, rerun:
 
 ```powershell
 python app.py
 ```
-
-The app automatically detects the project-local Windows Zeek binary. You still need a valid Npcap installation, Npcap SDK, and supported Visual Studio/MSVC developer environment; those are external Windows prerequisites.
 
 
 Open the dashboard at:
