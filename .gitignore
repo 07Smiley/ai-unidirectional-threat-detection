@@ -56,3 +56,12 @@ htmlcov/
 # ---- OS junk ----
 .DS_Store
 Thumbs.db
+
+# ---- Training datasets / generated model inputs ----
+data/processed/training_data.csv
+src/models/dataset/
+src/models/cleaned_data*.csv
+
+# Keep only the deployed unidirectional runtime artifacts under src/models/pkl.
+src/models/pkl/*_detector.pkl
+src/models/*_detector.pkl
