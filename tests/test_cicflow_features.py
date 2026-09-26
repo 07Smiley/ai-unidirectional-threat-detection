@@ -122,3 +122,17 @@ def test_backward_packet_does_not_change_forward_only_projection():
         "Fwd Header Length",
     ):
         assert two_way_row[name] == one_way_row[name]
+
+
+def test_unidirectional_mode_keeps_reverse_packets_as_separate_observed_flows():
+    extractor = CICFlowExtractor(unidirectional=True)
+    extractor.add_packet(_packet(1.0, "10.0.0.1", "10.0.0.2", 1234, 80, "PA", b"x" * 20))
+    extractor.add_packet(_packet(1.5, "10.0.0.2", "10.0.0.1", 80, 1234, "A", b"y" * 900))
+
+    rows = extractor.rows()
+
+    assert len(rows) == 2
+    observed = {(row["src_ip"], row["dst_ip"]) for row in rows}
+    assert observed == {("10.0.0.1", "10.0.0.2"), ("10.0.0.2", "10.0.0.1")}
+    assert sorted(row["Total Fwd Packets"] for row in rows) == [1, 1]
+    assert sorted(row["Total Backward Packets"] for row in rows) == [0, 0]
