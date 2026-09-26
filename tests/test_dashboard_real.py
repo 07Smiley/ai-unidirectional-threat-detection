@@ -184,6 +184,29 @@ class TestAPIChatHistory:
         assert resp.status_code == 404
 
 
+class TestThreatFlowAssociation:
+    def test_dga_alert_only_matches_its_dns_flow(self):
+        import dashboard as dash_module
+
+        alert = {
+            "type": "possible_dga",
+            "src_ip": "192.168.1.109",
+            "dst_ip": "192.168.1.1",
+            "dst_port": 53,
+            "ts": 100.0,
+        }
+
+        assert dash_module._threat_matches_flow(
+            alert, "192.168.1.109", "192.168.1.1", 53, 100.0
+        )
+        assert not dash_module._threat_matches_flow(
+            alert, "192.168.1.109", "142.250.72.14", 443, 100.0
+        )
+        assert not dash_module._threat_matches_flow(
+            alert, "192.168.1.109", "192.168.1.1", 53, 120.0
+        )
+
+
 class TestHomePage:
     def test_home_renders(self, app_client):
         client, dash = app_client
