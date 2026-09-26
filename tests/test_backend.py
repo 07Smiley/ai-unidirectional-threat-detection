@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
@@ -152,3 +153,43 @@ def test_run_rule_detectors_uses_shared_detector_set(monkeypatch, tmp_path):
             "max_interval_cv": 0.35,
         },
     )
+
+
+def test_live_response_requires_threshold_and_matching_source(monkeypatch, tmp_path):
+    from backend.live_service import LiveMonitoringService
+
+    service = LiveMonitoringService(lambda payload: None, log_dir=tmp_path / "zeek")
+    service.latest_ml.update({
+        "score": 91.0,
+        "source_ip": "10.0.0.1",
+        "destination_ip": "10.0.0.2",
+    })
+
+    with pytest.raises(ValueError, match="below the response threshold"):
+        service.confirm_response("block", "10.0.0.1")
+
+    service.latest_ml["score"] = 95.0
+    with pytest.raises(ValueError, match="does not match"):
+        service.confirm_response("block", "10.0.0.9")
+
+
+def test_live_response_requires_explicit_firewall_call(monkeypatch, tmp_path):
+    from backend.live_service import LiveMonitoringService
+
+    service = LiveMonitoringService(lambda payload: None, log_dir=tmp_path / "zeek")
+    service.latest_ml.update({
+        "score": 95.0,
+        "source_ip": "10.0.0.1",
+    })
+
+    calls = []
+    monkeypatch.setattr(
+        service.firewall,
+        "block",
+        lambda ip: calls.append(ip) or {"action": "block", "ip": ip},
+    )
+
+    result = service.confirm_response("block", "10.0.0.1")
+
+    assert result == {"action": "block", "ip": "10.0.0.1"}
+    assert calls == ["10.0.0.1"]
