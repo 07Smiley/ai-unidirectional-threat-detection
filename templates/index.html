@@ -63,6 +63,35 @@
     --theme-toggle-border:#000000;
     color-scheme:light;
   }
+  /* Explicit light-mode contrast overrides. Keep semantic colors
+     readable even where components also use inline CSS variables. */
+  body.light-mode .source-row:hover{
+    background:rgba(0,0,0,0.04);
+  }
+  body.light-mode .source-row.active{
+    background:rgba(0,0,0,0.06);
+    box-shadow:inset 3px 0 0 #000000;
+  }
+  body.light-mode .source-row .conf{
+    color:#000000 !important;
+  }
+  body.light-mode .source-row .sev{
+    background:#000000 !important;
+  }
+  body.light-mode .stat.flag .value,
+  body.light-mode .stat.ok .value{
+    color:#000000;
+  }
+  body.light-mode .response-panel{
+    background:#f5f5f7;
+    color:#000000;
+    border-color:#000000;
+  }
+  body.light-mode .panel{
+    background:#ffffff;
+    border-color:#d8d8df;
+  }
+
   body{
     background:var(--canvas-night);
     color:var(--on-primary);
