@@ -4,6 +4,7 @@ from typing import Callable
 
 import pandas as pd
 
+from src.detection.alert_dedup import AlertDeduplicator
 from src.detection.live_detector import LiveThreatDetector
 from src.features.live_flow_processor import LiveFlowProcessor
 from src.models.runtime import RuntimeModelRegistry
@@ -20,6 +21,7 @@ class LiveDetectionPipeline:
         callback: Callable[[dict], None] | None = None,
     ) -> None:
         self.rule_detector = LiveThreatDetector(max_rows=max_rows)
+        self.alert_dedup = AlertDeduplicator(window_seconds=30.0)
         self.models = RuntimeModelRegistry(model_paths)
         self.callback = callback
         self.feature_processor = LiveFlowProcessor(callback=self._process_features)
@@ -122,6 +124,12 @@ class LiveDetectionPipeline:
         rule_events = self.rule_detector.process(features)
 
         for event in rule_events:
+            # Rule detectors operate on a rolling window, so the same alert
+            # can otherwise be emitted on every incoming batch. Suppress only
+            # duplicate alert signatures; raw flows and ML predictions remain
+            # fully visible.
+            if self.alert_dedup.is_duplicate(event):
+                continue
             self._emit({"source": "rule", **event})
 
         self._emit_scored_ml(features)
