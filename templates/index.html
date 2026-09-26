@@ -423,8 +423,10 @@ async function loadLiveStatus(){
   }catch(e){
     // Flask dashboard can remain open even if FastAPI/app.py has stopped.
     document.getElementById('liveStatus').textContent='API OFFLINE';
-    document.getElementById('liveStart').disabled=false;
-    document.getElementById('liveStop').disabled=false;
+    // The dashboard can remain visible when FastAPI/app.py is gone, but
+    // live controls cannot work without the live API.
+    document.getElementById('liveStart').disabled=true;
+    document.getElementById('liveStop').disabled=true;
     if(liveSocket){
       try{ liveSocket.close(); }catch(err){}
       liveSocket=null;
