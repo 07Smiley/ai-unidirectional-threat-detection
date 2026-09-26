@@ -50,8 +50,14 @@ def test_pipeline_emits_ml_event(monkeypatch):
         event["source"] == "ml"
         and event["label"] == "DDoS"
         and event["confidence"] == 0.95
+        and event["src_ip"] == "10.0.0.1"
         for event in events
     )
+    scored = [event for event in events if event["type"] == "threat_score"]
+    assert scored
+    assert scored[-1]["score"] == 95.0
+    assert scored[-1]["source_ip"] == "10.0.0.1"
+    assert scored[-1]["prediction"]["src_ip"] == "10.0.0.1"
 
 
 def test_pipeline_exposes_model_status():
