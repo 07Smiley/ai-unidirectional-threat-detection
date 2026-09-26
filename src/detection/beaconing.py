@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-def detect_beaconing(flows, min_connections=5):
+def detect_beaconing(flows, min_connections=5, min_span_seconds=0.0, max_interval_cv=None):
     """
     Detect possible command-and-control (C2) communication.
 
@@ -42,8 +42,25 @@ def detect_beaconing(flows, min_connections=5):
                 average_interval = (
                     float(intervals.mean()) if not intervals.empty else None
                 )
+                interval_cv = (
+                    float(intervals.std(ddof=0) / average_interval)
+                    if average_interval and len(intervals) >= 2
+                    else 0.0
+                )
+                span_seconds = float(timestamps.iloc[-1] - timestamps.iloc[0])
             else:
                 average_interval = None
+                interval_cv = None
+                span_seconds = 0.0
+
+            if span_seconds < float(min_span_seconds):
+                continue
+            if (
+                max_interval_cv is not None
+                and interval_cv is not None
+                and interval_cv > float(max_interval_cv)
+            ):
+                continue
 
             results.append({
                 "type": "possible_beaconing",
@@ -51,6 +68,8 @@ def detect_beaconing(flows, min_connections=5):
                 "dst_ip": dst_ip,
                 "connection_count": connection_count,
                 "average_interval": average_interval,
+                "interval_cv": interval_cv,
+                "span_seconds": span_seconds,
                 "severity": "medium"
             })
 
