@@ -6,6 +6,7 @@ from src.zeek.installer import ZeekInstaller
 def test_windows_installer_runs_bootstrap(monkeypatch):
     installer = ZeekInstaller(system="Windows")
     monkeypatch.setattr(installer, "_command_exists", lambda name: False)
+    monkeypatch.setattr(installer, "_known_system_zeek_path", lambda: None)
     monkeypatch.setattr(
         installer,
         "_run_windows_setup",
@@ -147,6 +148,7 @@ def test_macos_installer_bootstraps_homebrew_when_missing(monkeypatch):
     monkeypatch.setattr(installer, "_find_brew", find_brew)
     monkeypatch.setattr(installer, "_install_homebrew", bootstrap)
     monkeypatch.setattr(installer, "_command_exists", lambda name: name == "zeek" and state["zeek"])
+    monkeypatch.setattr(installer, "_known_system_zeek_path", lambda: None)
     import src.zeek.installer as installer_module
     real_which = installer_module.shutil.which
     monkeypatch.setattr(
