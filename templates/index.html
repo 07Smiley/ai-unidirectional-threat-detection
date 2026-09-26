@@ -18,6 +18,9 @@
     --hairline-on-dark: #3a3a3f;
     --hairline-on-light: #e0e0e8;
     --link-on-dark: #ffffff;
+    --theme-toggle-bg: transparent;
+    --theme-toggle-fg: #ffffff;
+    --theme-toggle-border: #3a3a3f;
 
     /* semantic aliases — monochrome only, no brand accent colors.
        "attention" (flagged/DDoS) = full white; "muted" (ok/benign) = soft off-white */
@@ -42,6 +45,24 @@
     font-family: 'D-DIN', Arial, Verdana, sans-serif;
   }
   *{ box-sizing:border-box; margin:0; padding:0; }
+  html{color-scheme:dark;}
+  body.light-mode{
+    --canvas-night:#ffffff;
+    --canvas-night-soft:#f5f5f7;
+    --canvas-light:#000000;
+    --canvas-cool:#f0f0fa;
+    --on-primary:#000000;
+    --on-primary-mute:#333338;
+    --ink:#000000;
+    --ink-mute:#66666d;
+    --hairline-on-dark:#d8d8df;
+    --hairline-on-light:#e0e0e8;
+    --link-on-dark:#000000;
+    --theme-toggle-bg:#000000;
+    --theme-toggle-fg:#ffffff;
+    --theme-toggle-border:#000000;
+    color-scheme:light;
+  }
   body{
     background:var(--canvas-night);
     color:var(--on-primary);
@@ -80,6 +101,13 @@
   .live-btn.secondary{background:transparent;color:var(--on-primary)}
   .live-btn:disabled{opacity:.35;cursor:not-allowed}
   .live-status{font-size:10px;font-weight:700;letter-spacing:.7px;border:1px solid var(--hairline-on-dark);border-radius:var(--rounded-pill);padding:7px 10px}
+  .theme-toggle{
+    background:var(--theme-toggle-bg);color:var(--theme-toggle-fg);
+    border:1px solid var(--theme-toggle-border);border-radius:var(--rounded-pill);
+    padding:8px 12px;font:700 11px 'D-DIN',Arial,sans-serif;
+    text-transform:uppercase;letter-spacing:.6px;cursor:pointer;white-space:nowrap;
+  }
+  .theme-toggle:hover{opacity:.82}
   .model-badge{
     font-family:'D-DIN', Arial, Verdana, sans-serif;
     font-size:13.008px; font-weight:700; letter-spacing:1.17px;
@@ -239,6 +267,7 @@
     <select id="interfaceSelect" class="live-select"><option value="">Interface…</option></select>
     <button id="liveStart" class="live-btn">Start live</button>
     <button id="liveStop" class="live-btn secondary" disabled>Stop</button>
+    <button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch theme">☀ LIGHT</button>
     <span id="liveStatus" class="live-status">OFFLINE</span>
   </div>
 </header>
@@ -677,7 +706,30 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
   input.value = '';
 });
 
+/* --- theme --- */
+function applyTheme(mode){
+  const light=mode==='light';
+  document.body.classList.toggle('light-mode',light);
+  document.documentElement.style.colorScheme=light?'light':'dark';
+  const button=document.getElementById('themeToggle');
+  if(button){
+    button.textContent=light?'☾ DARK':'☀ LIGHT';
+    button.setAttribute('aria-label',light?'Switch to dark mode':'Switch to light mode');
+  }
+}
+function initTheme(){
+  const saved=localStorage.getItem('sentry-theme');
+  const preferred=window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  applyTheme(saved || preferred);
+}
+document.getElementById('themeToggle').addEventListener('click',()=>{
+  const next=document.body.classList.contains('light-mode')?'dark':'light';
+  localStorage.setItem('sentry-theme',next);
+  applyTheme(next);
+});
+
 /* --- initial load --- */
+initTheme();
 loadInterfaces();
 loadLiveStatus();
 loadStats();
