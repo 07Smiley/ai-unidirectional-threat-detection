@@ -913,6 +913,15 @@ def api_stats():
     })
 
 
+@app.route("/api/logs")
+def api_logs():
+    """All currently loaded flows across every source. GET /api/logs"""
+    error = _data_provider.get_error()
+    if error:
+        return jsonify({"error": error}), 503
+    return jsonify(_data_provider.get_flows())
+
+
 @app.route("/api/groups")
 def api_groups():
     """One row per source. GET /api/groups"""
