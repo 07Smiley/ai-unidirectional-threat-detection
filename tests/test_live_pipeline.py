@@ -64,3 +64,43 @@ def test_pipeline_exposes_model_status():
     pipeline = LiveDetectionPipeline()
     assert "loaded_models" in pipeline.model_status
     assert "unavailable_models" in pipeline.model_status
+
+
+def test_zeek_batch_does_not_run_packet_ml():
+    pipeline = LiveDetectionPipeline()
+    calls = []
+
+    class TrackingModels:
+        def status(self):
+            return {"loaded_models": ["ddos"], "unavailable_models": {}}
+
+        def predict(self, features):
+            calls.append(features.copy())
+            return []
+
+    pipeline.models = TrackingModels()
+
+    zeek_batch = pd.DataFrame(
+        [
+            {
+                "ts": 1.0,
+                "id.orig_h": "10.0.0.1",
+                "id.resp_h": "10.0.0.2",
+                "id.orig_p": 1234,
+                "id.resp_p": 80,
+                "proto": "tcp",
+                "duration": 0.5,
+                "orig_bytes": 100,
+                "resp_bytes": 200,
+                "orig_pkts": 2,
+                "resp_pkts": 3,
+                "orig_ip_bytes": 120,
+                "resp_ip_bytes": 220,
+                "missed_bytes": 0,
+            }
+        ]
+    )
+
+    pipeline.process_batch(zeek_batch)
+
+    assert calls == []
