@@ -99,6 +99,11 @@
   .stat .sub{ font-size:11.5px; color:var(--ink-mute); margin-top:var(--sp-xxs); }
   .stat.flag .value{ color:var(--attention); }
   .stat.ok .value{ color:var(--muted-ok); }
+  .response-panel{display:flex;align-items:center;justify-content:space-between;gap:18px;background:var(--canvas-night-soft);border:1px solid var(--on-primary);border-radius:var(--rounded-sm);padding:16px 20px}
+  .response-copy{min-width:0}.response-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.9px}
+  .response-detail{font-size:12px;color:var(--on-primary-mute);margin-top:4px}.response-meta{font-size:11px;color:var(--ink-mute);margin-top:3px}
+  .response-actions{display:flex;gap:8px;flex-shrink:0}.response-btn{background:var(--on-primary);color:var(--ink);border:1px solid var(--on-primary);border-radius:var(--rounded-pill);padding:9px 14px;font:700 11px 'D-DIN',Arial,sans-serif;text-transform:uppercase;letter-spacing:.6px;cursor:pointer}.response-btn.secondary{background:transparent;color:var(--on-primary)}.response-btn:disabled{opacity:.35;cursor:not-allowed}
+  @media(max-width:700px){.response-panel{align-items:flex-start;flex-direction:column}.response-actions{width:100%}.response-btn{flex:1}}
 
   .main{ display:grid; grid-template-columns:1fr 1.4fr; gap:var(--sp-xl); align-items:start; }
   @media (max-width: 980px){ .main{ grid-template-columns:1fr; } }
@@ -242,6 +247,18 @@
 
   <div class="stats" id="statStrip"></div>
 
+  <section class="response-panel" id="responsePanel" hidden>
+    <div class="response-copy">
+      <div class="response-title" id="responseTitle">Threat response available</div>
+      <div class="response-detail" id="responseDetail">Manual action is available only at 92%+ threat score.</div>
+      <div class="response-meta" id="responseMeta">IP blocker: MANUAL · Ignore is session-only</div>
+    </div>
+    <div class="response-actions">
+      <button class="response-btn" id="responseBlock">Block IP</button>
+      <button class="response-btn secondary" id="responseIgnore">Ignore</button>
+    </div>
+  </section>
+
   <div class="main">
     <section class="panel">
       <div class="panel-head">
@@ -306,6 +323,8 @@ let liveModelLabel = 'OFFLINE';
 let latestThreatScore = 0;
 let latestMlPrediction = null;
 let lastPromptedScore = null;
+const ignoredIps = new Set();
+const RESPONSE_THRESHOLD = 92;
 
 async function loadLiveStatus(){
   try{
@@ -320,6 +339,8 @@ async function loadLiveStatus(){
     const latest=(s.latest_ml)||{};
     latestThreatScore=Number(latest.score||0);
     latestMlPrediction=latest.prediction||null;
+    if(latest.source_ip && latestMlPrediction) latestMlPrediction.src_ip=latest.source_ip;
+    updateResponsePanel();
     liveModelLabel = loaded.length
       ? 'UNIDIRECTIONAL ML · '+loaded.length+' MODEL'+(loaded.length===1?'':'S')
       : 'RULES ONLY · UNI ML READY';
@@ -363,9 +384,9 @@ function connectLiveSocket(){
       if(data.event==='live_threat'){
         if(data.type==='threat_score'){
           latestThreatScore=Number(data.score||0);
+          updateResponsePanel();
           if(data.response_available && latestThreatScore!==lastPromptedScore){
             lastPromptedScore=latestThreatScore;
-            promptForResponse();
           }
           loadStats();
         }
@@ -402,29 +423,37 @@ async function startLive(){
   }catch(e){alert(e.message)}
 }
 
-async function promptForResponse(){
-  if(!latestMlPrediction || !latestMlPrediction.src_ip) return;
-  const score=latestThreatScore.toFixed(2);
-  const label=latestMlPrediction.label || 'THREAT';
-  const ip=latestMlPrediction.src_ip;
-  const ok=window.confirm(
-    'THREAT SCORE '+score+'\\n\\n'+label+' detected from '+ip+'.\\n\\nBlock this source IP on this host?'
-  );
+function currentThreatIp(){
+  return (latestMlPrediction && (latestMlPrediction.src_ip || latestMlPrediction.source_ip)) || null;
+}
+function updateResponsePanel(){
+  const panel=document.getElementById('responsePanel'); if(!panel) return;
+  const ip=currentThreatIp();
+  const eligible=latestThreatScore>=RESPONSE_THRESHOLD && !!ip && !ignoredIps.has(ip);
+  panel.hidden=!eligible; if(!eligible) return;
+  const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
+  document.getElementById('responseTitle').textContent='THREAT RESPONSE AVAILABLE';
+  document.getElementById('responseDetail').textContent=label+' detected from '+ip+' · score '+latestThreatScore.toFixed(0)+'%';
+  document.getElementById('responseMeta').textContent='Manual IP blocker · threshold '+RESPONSE_THRESHOLD+'% · no automatic blocking';
+}
+async function blockCurrentThreat(){
+  const ip=currentThreatIp(); if(!ip || latestThreatScore<RESPONSE_THRESHOLD) return;
+  const ok=window.confirm('Block source IP '+ip+' on this host?\\n\\nThreat score: '+latestThreatScore.toFixed(0)+'%\\nAction requires your confirmation.');
   if(!ok) return;
   try{
-    const res=await fetch(LIVE_API+'/api/live/response',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'block',ip})
-    });
-    const data=await res.json();
-    if(!res.ok) throw new Error(data.detail||'Firewall action failed');
-    window.alert('Source IP '+ip+' was blocked.');
-  }catch(e){
-    window.alert('Response failed: '+e.message);
-  }
+    const res=await fetch(LIVE_API+'/api/live/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'block',ip})});
+    const data=await res.json(); if(!res.ok) throw new Error(data.detail||'Firewall action failed');
+    document.getElementById('responseTitle').textContent='SOURCE IP BLOCKED';
+    document.getElementById('responseDetail').textContent=ip+' was blocked on this host.';
+    document.getElementById('responseMeta').textContent='Manual response completed.';
+    document.getElementById('responseBlock').disabled=true;
+  }catch(e){window.alert('Response failed: '+e.message);}
 }
-
+function ignoreCurrentThreat(){
+  const ip=currentThreatIp(); if(!ip) return;
+  ignoredIps.add(ip); document.getElementById('responsePanel').hidden=true;
+  document.getElementById('responseBlock').disabled=false; lastPromptedScore=null;
+}
 async function stopLive(){
   try{
     await fetch(LIVE_API+'/api/live/stop',{method:'POST'});
@@ -435,6 +464,8 @@ async function stopLive(){
 
 document.getElementById('liveStart').addEventListener('click',startLive);
 document.getElementById('liveStop').addEventListener('click',stopLive);
+document.getElementById('responseBlock').addEventListener('click',blockCurrentThreat);
+document.getElementById('responseIgnore').addEventListener('click',ignoreCurrentThreat);
 
 let selectedGroup = null;
 let groups = [];
@@ -456,10 +487,11 @@ async function loadStats(){
     const flagPct = total > 0 ? ((s.flagged / total) * 100).toFixed(3) : '0.000';
     const strip = [
       {label:'Flows analyzed', value:total.toLocaleString(), sub:s.flows_analyzed_window || '—', cls:''},
-      {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flows, ' + flagPct + '% of total', cls:'flag'},
-      {label:'Avg confidence', value:fmtConf(s.avg_confidence), sub:'on flagged flows', cls:'ok'},
-      {label:'Live threat score', value:latestThreatScore.toFixed(2), sub:latestMlPrediction ? (latestMlPrediction.label+' · '+fmtConf(latestMlPrediction.confidence)) : 'waiting for ML inference', cls:latestThreatScore >= 75 ? 'flag' : ''},
-      {label:'Active model', value:liveModelLabel, sub:'live detection pipeline', cls:''}
+      {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flagged flows · ' + flagPct + '% of total', cls:'flag'},
+      {label:'Rule confidence', value:fmtConf(s.avg_confidence), sub:'rule-based flagged flows', cls:'ok'},
+      {label:'ML confidence', value:latestMlPrediction ? fmtConf(latestMlPrediction.confidence) : '—', sub:latestMlPrediction ? ('latest '+(latestMlPrediction.label||'prediction')) : 'waiting for ML inference', cls:latestMlPrediction && Number(latestMlPrediction.confidence||0) >= 0.92 ? 'flag' : ''},
+      {label:'ML engine', value:liveModelLabel.replace('UNIDIRECTIONAL ML · ','') || 'OFFLINE', sub:'forward-only inference · 15 features', cls:''},
+      {label:'Threat response', value:latestThreatScore >= RESPONSE_THRESHOLD ? 'AVAILABLE' : 'MANUAL', sub:'manual block at '+RESPONSE_THRESHOLD+'%+', cls:latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : ''}
     ];
     document.getElementById('statStrip').innerHTML = strip.map(s => `
       <div class="stat ${s.cls}">
@@ -501,10 +533,10 @@ function renderGroups(){
     <div class="source-row ${g.group_id===selectedGroup?'active':''}" data-id="${g.group_id}">
       <div class="sev" style="background:${flagged?'var(--attention)':'var(--muted-ok)'}"></div>
       <div class="who">
-        <div class="primary">${g.host ? g.host : g.src_ip}</div>
-        <div class="secondary">${g.host ? g.src_ip + ' · ' : ''}last seen ${g.last_seen || '—'}</div>
+        <div class="primary">${g.src_ip || g.host || 'Unknown source'}</div>
+        <div class="secondary">${g.host ? g.host + ' · ' : ''}last seen ${g.last_seen || '—'}</div>
       </div>
-      <div class="count-badge">${g.request_count} req</div>
+      <div class="count-badge">${g.request_count} flows</div>
       <div class="conf" style="color:${flagged?'var(--attention)':'var(--muted-ok)'}">${fmtConf(g.confidence)}</div>
     </div>`;
   }).join('');
@@ -551,7 +583,7 @@ function renderLogs(logs){
     <div class="log-row">
       <span class="lbl ${flagged?'ddos':'benign'}">${l.label}</span>
       <div class="info">
-        <div class="path">${l.id} → ${l.dst_ip}:${fmtPort(l.dst_port)}</div>
+        <div class="path">${l.src_ip || selectedGroup} → ${l.dst_ip}:${fmtPort(l.dst_port)}</div>
         <div class="meta">${fmtProto(l.protocol)} · ${fmtPps(l.packets_per_sec)} pkt/s</div>
       </div>
       <div class="conf">${fmtConf(l.confidence)}</div>
