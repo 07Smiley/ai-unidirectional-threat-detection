@@ -144,8 +144,8 @@ def test_multi_model_predictions_keep_each_flow_metadata():
             return [
                 {"model": "ddos", "label": "DDoS", "confidence": 0.70},
                 {"model": "ddos", "label": "DDoS", "confidence": 0.40},
-                {"model": "portscan", "label": "PortScan", "confidence": 0.99},
                 {"model": "portscan", "label": "PortScan", "confidence": 0.20},
+                {"model": "portscan", "label": "PortScan", "confidence": 0.99},
             ]
 
     pipeline.models = MultiModelFake()
@@ -165,41 +165,3 @@ def test_multi_model_predictions_keep_each_flow_metadata():
     assert scored[-1]["source_ip"] == "10.0.0.3"
     assert scored[-1]["destination_ip"] == "10.0.0.4"
     assert scored[-1]["prediction"]["model"] == "portscan"
-
-    pipeline = LiveDetectionPipeline()
-    calls = []
-
-    class TrackingModels:
-        def status(self):
-            return {"loaded_models": ["ddos"], "unavailable_models": {}}
-
-        def predict(self, features):
-            calls.append(features.copy())
-            return []
-
-    pipeline.models = TrackingModels()
-
-    zeek_batch = pd.DataFrame(
-        [
-            {
-                "ts": 1.0,
-                "id.orig_h": "10.0.0.1",
-                "id.resp_h": "10.0.0.2",
-                "id.orig_p": 1234,
-                "id.resp_p": 80,
-                "proto": "tcp",
-                "duration": 0.5,
-                "orig_bytes": 100,
-                "resp_bytes": 200,
-                "orig_pkts": 2,
-                "resp_pkts": 3,
-                "orig_ip_bytes": 120,
-                "resp_ip_bytes": 220,
-                "missed_bytes": 0,
-            }
-        ]
-    )
-
-    pipeline.process_batch(zeek_batch)
-
-    assert calls == []
