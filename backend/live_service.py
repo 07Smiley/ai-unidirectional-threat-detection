@@ -80,6 +80,12 @@ class LiveMonitoringService:
         elif event.get("type") == "threat_score":
             self.latest_ml["score"] = float(event.get("score", 0.0))
             self.latest_ml["response_available"] = bool(event.get("response_available", False))
+            # The score and response target must come from the same winning
+            # prediction. Never reuse whichever ML event happened to arrive last.
+            self.latest_ml["source_ip"] = event.get("source_ip")
+            self.latest_ml["destination_ip"] = event.get("destination_ip")
+            if event.get("prediction") is not None:
+                self.latest_ml["prediction"] = event.get("prediction")
 
         payload = {
             "event": "live_threat",
