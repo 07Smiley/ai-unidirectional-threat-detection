@@ -36,7 +36,8 @@ class LiveZeekReader:
         with self.log_path.open("r", encoding="utf-8", errors="ignore") as file:
             for line in file:
                 if line.startswith("#fields"):
-                    fields = line.rstrip("\n").split("\t")[1:]
+                    fields_text = line[len("#fields") :].lstrip(" \t")
+                    fields = fields_text.rstrip("\n").split("\t")
                     break
 
         if fields is None:
