@@ -388,12 +388,20 @@ const RESPONSE_THRESHOLD = 92;
 
 async function loadLiveStatus(){
   try{
-    const res=await fetch(LIVE_API+'/api/live/status');
+    const res=await fetch(LIVE_API+'/api/live/status',{cache:'no-store'});
+    if(!res.ok) throw new Error('Live status request failed');
     const s=await res.json();
     const running=!!s.running;
-    document.getElementById('liveStatus').textContent=running?'LIVE':'OFFLINE';
+
+    // The dashboard remains open independently of the sensor. The status
+    // reflects the actual FastAPI live-monitor state, not whether the page
+    // itself is reachable.
+    document.getElementById('liveStatus').textContent=running?'ONLINE':'OFFLINE';
     document.getElementById('liveStart').disabled=running;
+    // STOP is always available while the dashboard is open. The API stop
+    // endpoint is idempotent, so clicking it while offline is safe.
     document.getElementById('liveStop').disabled=false;
+
     if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
     const loaded=(s.models&&s.models.loaded_models)||[];
     const latest=(s.latest_ml)||{};
@@ -405,11 +413,32 @@ async function loadLiveStatus(){
       ? 'UNIDIRECTIONAL ML · '+loaded.length+' MODEL'+(loaded.length===1?'':'S')
       : 'RULES ONLY · UNI ML READY';
     document.getElementById('modelBadge').textContent = liveModelLabel;
+
     if(running) connectLiveSocket();
+    else if(liveSocket){
+      try{ liveSocket.close(); }catch(e){}
+      liveSocket=null;
+    }
     return s;
   }catch(e){
+    // Flask dashboard can remain open even if FastAPI/app.py has stopped.
     document.getElementById('liveStatus').textContent='API OFFLINE';
+    document.getElementById('liveStart').disabled=false;
+    document.getElementById('liveStop').disabled=false;
+    if(liveSocket){
+      try{ liveSocket.close(); }catch(err){}
+      liveSocket=null;
+    }
+    return null;
   }
+}
+
+let liveStatusPollTimer = null;
+function startLiveStatusPolling(){
+  if(liveStatusPollTimer) clearInterval(liveStatusPollTimer);
+  // Keep ONLINE/OFFLINE/API OFFLINE synchronized even when the user does
+  // not interact with the Start/Stop buttons.
+  liveStatusPollTimer = setInterval(loadLiveStatus, 2000);
 }
 
 async function loadInterfaces(){
@@ -480,8 +509,7 @@ async function startLive(){
     const res=await fetch(LIVE_API+'/api/live/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interface:iface})});
     const data=await res.json();
     if(!res.ok) throw new Error(data.detail||'Unable to start live monitoring');
-    document.getElementById('liveStatus').textContent='LIVE';
-    connectLiveSocket();
+    await loadLiveStatus();
     loadStats(); loadGroups();
   }catch(e){alert(e.message)}
 }
@@ -524,8 +552,7 @@ async function stopLive(){
     const res=await fetch(LIVE_API+'/api/live/stop',{method:'POST'});
     const data=await res.json();
     if(!res.ok) throw new Error(data.detail||'Unable to stop live monitoring');
-    document.getElementById('liveStatus').textContent='OFFLINE';
-    if(liveSocket){ try{ liveSocket.close(); }catch(e){} liveSocket=null; }
+    await loadLiveStatus();
     loadStats(); loadGroups();
   }catch(e){
     button.disabled=false;
@@ -788,6 +815,7 @@ document.getElementById('themeToggle').addEventListener('click',()=>{
 initTheme();
 loadInterfaces();
 loadLiveStatus();
+startLiveStatusPolling();
 loadStats();
 loadGroups();
 loadAllLogs();
