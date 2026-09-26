@@ -267,23 +267,7 @@ import pandas as pd
 # consumes their output, never duplicates their logic.
 from src.ingest.pcap_reader import read_zeek_log
 from src.features.flow_features import create_flow_features
-from src.detection.scanning import detect_scanning
-from src.detection.ddos import detect_ddos
-from src.detection.beaconing import detect_beaconing
-
-# Optional detectors — may not be importable if dependencies are missing,
-# so we guard them with try/except and disable gracefully.
-try:
-    from src.detection.exfiltration import detect_exfiltration
-    _HAS_EXFILTRATION = True
-except ImportError:
-    _HAS_EXFILTRATION = False
-
-try:
-    from src.detection.dga import detect_dga
-    _HAS_DGA = True
-except ImportError:
-    _HAS_DGA = False
+from backend.services import run_rule_detectors
 
 
 # Resolve the project root relative to this file
@@ -489,37 +473,15 @@ class RealDataProvider:
             # 2) Load hostname mapping from DNS/SSL logs
             self._hostname_map = self._load_hostname_map(zeek_dir)
 
-            # 3) Run rule-based detectors on the flow features
-            threats = []
-            try:
-                threats += detect_scanning(flow_df, min_unique_ports=8, min_connections=8)
-            except Exception as e:
-                print(f"[Dashboard] Scanning detector error: {e}")
-            try:
-                threats += detect_ddos(flow_df)
-            except Exception as e:
-                print(f"[Dashboard] DDoS detector error: {e}")
-            try:
-                threats += detect_beaconing(flow_df, min_connections=8, min_span_seconds=15.0, max_interval_cv=0.35)
-            except Exception as e:
-                print(f"[Dashboard] Beaconing detector error: {e}")
-
-            # Optional detectors that need separate log files
-            if _HAS_EXFILTRATION:
-                try:
-                    threats += detect_exfiltration(conn_log)
-                except Exception as e:
-                    print(f"[Dashboard] Exfiltration detector error: {e}")
-
-            if _HAS_DGA:
-                dns_log = zeek_dir / "dns.log"
-                if dns_log.exists():
-                    try:
-                        threats += detect_dga(dns_log)
-                    except Exception as e:
-                        print(f"[Dashboard] DGA detector error: {e}")
-
-            self._threats = threats
+            # 3) Run the shared offline/Zeek detector orchestration.
+            # The Flask UI is presentation-only; detector selection and
+            # thresholds live in backend.services.
+            self._threats = run_rule_detectors(
+                flow_df,
+                conn_log=conn_log,
+                dns_log=zeek_dir / "dns.log",
+            )
+            threats = self._threats
 
             # 4) Build a set of "involved" source IPs from threat results
             threat_src_ips = set()
