@@ -166,8 +166,6 @@ def test_multi_model_predictions_keep_each_flow_metadata():
     assert scored[-1]["destination_ip"] == "10.0.0.4"
     assert scored[-1]["prediction"]["model"] == "portscan"
 
-
-def test_zeek_batch_does_not_run_packet_ml():
     pipeline = LiveDetectionPipeline()
     calls = []
 
