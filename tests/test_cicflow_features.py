@@ -1,4 +1,5 @@
-import pytest\nfrom scapy.layers.inet import IP, TCP
+import pytest
+from scapy.layers.inet import IP, TCP
 
 from src.features.cicflow_features import CICFlowExtractor
 
