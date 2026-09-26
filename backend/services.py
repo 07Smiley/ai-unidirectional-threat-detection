@@ -10,6 +10,16 @@ from src.detection.ddos import detect_ddos
 from src.detection.scanning import detect_scanning
 from src.main import load_flow_features
 
+try:
+    from src.detection.exfiltration import detect_exfiltration
+except ImportError:
+    detect_exfiltration = None
+
+try:
+    from src.detection.dga import detect_dga
+except ImportError:
+    detect_dga = None
+
 from backend.schemas import ThreatAnalysisResponse, ThreatEvent
 
 
@@ -18,6 +28,61 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class DetectionInputError(ValueError):
     pass
+
+
+def run_rule_detectors(
+    flows,
+    *,
+    conn_log: Path | None = None,
+    dns_log: Path | None = None,
+) -> list[dict]:
+    """Run the canonical offline/Zeek rule detector set.
+
+    Live packet ML is handled separately by LiveDetectionPipeline. This
+    function is the shared orchestration layer for offline/Zeek dashboard
+    analysis so individual web frontends cannot drift into different
+    detector combinations or thresholds.
+    """
+    threats: list[dict] = []
+
+    try:
+        threats.extend(
+            detect_scanning(flows, min_unique_ports=8, min_connections=8)
+        )
+    except Exception as exc:
+        print(f"[DetectionService] Scanning detector error: {exc}")
+
+    try:
+        threats.extend(detect_ddos(flows))
+    except Exception as exc:
+        print(f"[DetectionService] DDoS detector error: {exc}")
+
+    try:
+        threats.extend(
+            detect_beaconing(
+                flows,
+                min_connections=8,
+                min_span_seconds=15.0,
+                max_interval_cv=0.35,
+            )
+        )
+    except Exception as exc:
+        print(f"[DetectionService] Beaconing detector error: {exc}")
+
+    if detect_exfiltration is not None and conn_log is not None:
+        try:
+            threats.extend(detect_exfiltration(conn_log))
+        except Exception as exc:
+            print(f"[DetectionService] Exfiltration detector error: {exc}")
+
+    if detect_dga is not None and dns_log is not None and dns_log.exists():
+        try:
+            threats.extend(detect_dga(dns_log))
+        except Exception as exc:
+            print(f"[DetectionService] DGA detector error: {exc}")
+
+    return threats
+
 
 
 def _resolve_input_path(input_path: str) -> Path:
@@ -111,11 +176,7 @@ class DetectionService:
             raise FileNotFoundError(f"Input file not found: {resolved_path}")
 
         flows = load_flow_features(resolved_path)
-        raw_results = (
-            detect_scanning(flows)
-            + detect_ddos(flows)
-            + detect_beaconing(flows)
-        )
+        raw_results = run_rule_detectors(flows, conn_log=resolved_path)
         threats = [
             _normalize_threat(resolved_path, result)
             for result in raw_results
