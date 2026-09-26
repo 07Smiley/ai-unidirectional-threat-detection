@@ -189,7 +189,7 @@ class TestHomePage:
         client, dash = app_client
         resp = client.get("/")
         assert resp.status_code == 200
-        assert b"Sentry" in resp.data
+        assert b"SHAKALAKA" in resp.data
 
 
 class TestNoSampleData:
