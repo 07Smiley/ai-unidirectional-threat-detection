@@ -107,3 +107,48 @@ def test_websocket_receives_analysis_events(monkeypatch):
     assert event["event"] == "threat_analysis_completed"
     assert event["threat_count"] == 1
     assert event["threats"][0]["type"] == "possible_port_scan"
+
+
+def test_run_rule_detectors_uses_shared_detector_set(monkeypatch, tmp_path):
+    import backend.services as services
+
+    calls = []
+
+    def scanning(flows, **kwargs):
+        calls.append(("scanning", kwargs))
+        return [{"type": "possible_port_scan"}]
+
+    def ddos(flows):
+        calls.append(("ddos", {}))
+        return [{"type": "possible_ddos"}]
+
+    def beaconing(flows, **kwargs):
+        calls.append(("beaconing", kwargs))
+        return [{"type": "possible_beaconing"}]
+
+    monkeypatch.setattr(services, "detect_scanning", scanning)
+    monkeypatch.setattr(services, "detect_ddos", ddos)
+    monkeypatch.setattr(services, "detect_beaconing", beaconing)
+    monkeypatch.setattr(services, "detect_exfiltration", None)
+    monkeypatch.setattr(services, "detect_dga", None)
+
+    results = services.run_rule_detectors(object())
+
+    assert [item["type"] for item in results] == [
+        "possible_port_scan",
+        "possible_ddos",
+        "possible_beaconing",
+    ]
+    assert calls[0] == (
+        "scanning",
+        {"min_unique_ports": 8, "min_connections": 8},
+    )
+    assert calls[1] == ("ddos", {})
+    assert calls[2] == (
+        "beaconing",
+        {
+            "min_connections": 8,
+            "min_span_seconds": 15.0,
+            "max_interval_cv": 0.35,
+        },
+    )
