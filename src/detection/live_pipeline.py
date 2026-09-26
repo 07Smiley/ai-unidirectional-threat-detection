@@ -7,7 +7,7 @@ import pandas as pd
 from src.detection.live_detector import LiveThreatDetector
 from src.features.live_flow_processor import LiveFlowProcessor
 from src.models.runtime import RuntimeModelRegistry
-from src.detection.threat_score import calculate_threat_score, response_offer
+from src.detection.threat_score import calculate_threat_evidence, response_offer
 
 
 class LiveDetectionPipeline:
@@ -103,13 +103,17 @@ class LiveDetectionPipeline:
                 }
             )
 
-        score = calculate_threat_score(ml_events)
+        evidence = calculate_threat_evidence(ml_events)
+        score = evidence["score"]
         self._emit(
             {
                 "source": "scoring",
                 "type": "threat_score",
                 "score": score,
                 "response_available": response_offer(score),
+                "source_ip": evidence["source_ip"],
+                "destination_ip": evidence["destination_ip"],
+                "prediction": evidence["prediction"],
             }
         )
         return ml_events
