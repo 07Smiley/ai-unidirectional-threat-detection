@@ -278,7 +278,7 @@ class ZeekManager:
         """Validate that an interface is suitable for normal live capture."""
         details = next((item for item in self.list_interface_details() if item["name"] == interface), None)
         if details is None:
-            return {"valid": False, "interface": interface, "reason": "Network interface not found."}
+            return {"valid": False, "interface": interface, "reason": f"Network interface not found: {interface}"}
         if details.get("loopback"):
             return {"valid": False, "interface": interface, "reason": "Loopback interfaces are not supported for normal live capture.", "details": details}
         if not details.get("up"):
