@@ -10,7 +10,7 @@ class ThreatResponsePolicy:
     A threshold only creates an offer; it never performs a network action.
     """
 
-    threshold: float = 0.75
+    threshold: float = 0.92
     ask_before_switch: bool = True
     ask_before_block: bool = True
 
