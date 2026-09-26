@@ -26,3 +26,9 @@ def test_deployed_unidirectional_model_artifact_loads(model_name):
     assert model.model is not None
     assert hasattr(model.model, "predict")
     assert hasattr(model.model, "classes_")
+
+
+def test_runtime_schema_contains_no_forbidden_bidirectional_features():
+    from src.features.unidirectional_features import FORBIDDEN_BIDIRECTIONAL_FEATURES
+
+    assert not (set(UNIDIRECTIONAL_FEATURES) & FORBIDDEN_BIDIRECTIONAL_FEATURES)
