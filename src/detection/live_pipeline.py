@@ -132,7 +132,10 @@ class LiveDetectionPipeline:
                 continue
             self._emit({"source": "rule", **event})
 
-        self._emit_scored_ml(features)
+        # Zeek conn.log provides telemetry for rule detection. It does not
+        # contain the packet-level fields required by the canonical 15-feature
+        # unidirectional ML schema, so ML inference is intentionally handled
+        # only by process_packet_features() using CICFlow packet features.
 
     @property
     def model_status(self) -> dict:
