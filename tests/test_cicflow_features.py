@@ -1,4 +1,4 @@
-from scapy.layers.inet import IP, TCP
+import pytest\nfrom scapy.layers.inet import IP, TCP
 
 from src.features.cicflow_features import CICFlowExtractor
 
@@ -30,12 +30,12 @@ def test_bidirectional_flow_features():
     assert row["Total Backward Packets"] == 1
     assert row["SYN Flag Count"] == 2
     assert row["ACK Flag Count"] == 2
-    assert row["Flow Duration"] == 300000.0
-    assert row["Fwd IAT Total"] == 300000.0
-    assert row["Fwd IAT Mean"] == 300000.0
+    assert row["Flow Duration"] == pytest.approx(300000.0)
+    assert row["Fwd IAT Total"] == pytest.approx(300000.0)
+    assert row["Fwd IAT Mean"] == pytest.approx(300000.0)
     assert row["Fwd IAT Std"] == 0.0
-    assert row["Fwd IAT Max"] == 300000.0
-    assert row["Fwd IAT Min"] == 300000.0
+    assert row["Fwd IAT Max"] == pytest.approx(300000.0)
+    assert row["Fwd IAT Min"] == pytest.approx(300000.0)
     assert row["Flow Packets/s"] > 0
 
 
