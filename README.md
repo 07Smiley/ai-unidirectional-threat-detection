@@ -98,9 +98,9 @@ Combine directionality, rate, entropy, protocol metadata and model confidence in
 | WebSocket live events | Implemented |
 | Dashboard live controls | Implemented |
 | ML runtime/schema validation | Implemented |
-| ML models trained on exact live schema | **In progress** |
+| ML models trained on exact live schema | Implemented |
 | ML predictions connected to dashboard verdicts | Implemented |
-| Alert deduplication | **Remaining** |
+| Alert deduplication | Implemented |
 | Unidirectional-aware feature set | Implemented |
 | Full real-NIC end-to-end validation | **Remaining** |
 | Cross-platform deployment validation | **Remaining** |
