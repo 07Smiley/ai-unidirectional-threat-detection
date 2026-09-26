@@ -247,8 +247,7 @@ def get_or_create_group_chat(group_id, client):
 #   Zeek logs (conn.log, dns.log, ssl.log)
 #       ↓
 #   read_zeek_log()          — parse TSV to DataFrame
-#       ↓
-#   create_flow_features()   — derive flow-level features
+#       ↓#   create_flow_features()   — derive flow-level features
 #       ↓
 #   detect_scanning / detect_ddos / detect_beaconing  — rule-based detectors
 #       ↓
@@ -497,8 +496,7 @@ class RealDataProvider:
             except Exception as e:
                 print(f"[Dashboard] Scanning detector error: {e}")
             try:
-                threats += detect_ddos(flow_df)
-            except Exception as e:
+                threats += detect_ddos(flow_df)            except Exception as e:
                 print(f"[Dashboard] DDoS detector error: {e}")
             try:
                 threats += detect_beaconing(flow_df)
@@ -559,6 +557,8 @@ class RealDataProvider:
                     )
 
                     if matched:
+                        ttype = t.get("type", "")
+                        t_dst = t.get("dst_ip", "")
                         label = ttype.replace("possible_", "").upper()
                         threat_type = ttype
                         severity = t.get("severity", "medium")
@@ -747,8 +747,7 @@ def get_group_logs(group_id):
 
 def get_group_analysis(group_id):
     """The rule-based detection verdict for this source — shown as the first
-    message in that source's Analysis chat.
-    """
+    message in that source's Analysis chat.    """
     logs = get_group_logs(group_id)
     if not logs:
         return None
@@ -998,4 +997,3 @@ if __name__ == "__main__":
         debug=os.environ.get("DASHBOARD_DEBUG", "0") == "1",
         threaded=True,
         use_reloader=False,
-    )
