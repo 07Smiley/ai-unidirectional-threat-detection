@@ -148,6 +148,8 @@ def live_response(request: ResponseRequest) -> dict[str, Any]:
 
 @app.post("/api/live/stop")
 def live_stop() -> dict[str, Any]:
+    # Stop is intentionally idempotent: pressing it while already offline
+    # simply keeps the sensor stopped and returns a clean OFFLINE status.
     return app.state.live_monitor.stop()
 
 
