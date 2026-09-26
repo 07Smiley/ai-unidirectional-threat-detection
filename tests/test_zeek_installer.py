@@ -23,6 +23,7 @@ def test_windows_installer_runs_bootstrap(monkeypatch):
 
 def test_windows_installer_accepts_project_local_binary(tmp_path, monkeypatch):
     installer = ZeekInstaller(system="Windows")
+    monkeypatch.setattr(installer, "_known_system_zeek_path", lambda: None)
     local = tmp_path / "zeek.exe"
     local.write_text("stub", encoding="utf-8")
     monkeypatch.setattr(installer, "_repo_root", lambda: tmp_path)
@@ -41,6 +42,7 @@ def test_windows_installer_accepts_project_local_binary(tmp_path, monkeypatch):
 
 def test_linux_installer_uses_direct_package_command_when_running_as_root(monkeypatch):
     installer = ZeekInstaller(system="Linux")
+    monkeypatch.setattr(installer, "_known_system_zeek_path", lambda: None)
     state = {"zeek": False}
     monkeypatch.setattr(
         installer,
@@ -75,6 +77,7 @@ def test_windows_npcap_sdk_detection_uses_windows_paths(tmp_path, monkeypatch):
 
 def test_windows_bootstrap_accepts_successful_local_build(tmp_path, monkeypatch):
     installer = ZeekInstaller(system="Windows")
+    monkeypatch.setattr(installer, "_known_system_zeek_path", lambda: None)
     monkeypatch.setattr(installer, "_repo_root", lambda: tmp_path)
     monkeypatch.setattr(installer, "_command_exists", lambda name: name in {"powershell"})
     script = tmp_path / "scripts" / "windows" / "setup-zeek.ps1"
@@ -108,6 +111,7 @@ def test_windows_bootstrap_accepts_successful_local_build(tmp_path, monkeypatch)
 
 def test_linux_ubuntu_uses_official_obs_repository(monkeypatch):
     installer = ZeekInstaller(system="Linux")
+    monkeypatch.setattr(installer, "_known_system_zeek_path", lambda: None)
     monkeypatch.setattr(installer, "_linux_release", lambda: ("ubuntu", "24.04"))
     state = {"zeek": False}
     monkeypatch.setattr(
