@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-def detect_scanning(flows, min_unique_ports=5):
+def detect_scanning(flows, min_unique_ports=5, min_connections=0):
     """
     Detect possible port-scanning behavior from Zeek connection data.
 
@@ -34,7 +34,7 @@ def detect_scanning(flows, min_unique_ports=5):
         unique_ports = group["id.resp_p"].dropna().nunique()
         connection_count = len(group)
 
-        if unique_ports >= min_unique_ports:
+        if unique_ports >= min_unique_ports and connection_count >= int(min_connections):
 
             results.append({
                 "type": "possible_port_scan",
