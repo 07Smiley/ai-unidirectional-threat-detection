@@ -176,7 +176,10 @@ class DetectionService:
             raise FileNotFoundError(f"Input file not found: {resolved_path}")
 
         flows = load_flow_features(resolved_path)
-        raw_results = run_rule_detectors(flows, conn_log=resolved_path)
+        raw_results = run_rule_detectors(
+            flows,
+            conn_log=resolved_path if resolved_path.name == "conn.log" else None,
+        )
         threats = [
             _normalize_threat(resolved_path, result)
             for result in raw_results
