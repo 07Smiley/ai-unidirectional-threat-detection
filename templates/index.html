@@ -413,6 +413,8 @@ function connectLiveSocket(){
       if(data.event==='live_threat'){
         if(data.type==='threat_score'){
           latestThreatScore=Number(data.score||0);
+          if(data.prediction) latestMlPrediction=data.prediction;
+          else if(data.source_ip && latestMlPrediction) latestMlPrediction.src_ip=data.source_ip;
           updateResponsePanel();
           if(data.response_available && latestThreatScore!==lastPromptedScore){
             lastPromptedScore=latestThreatScore;
