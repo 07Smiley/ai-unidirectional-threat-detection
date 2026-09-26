@@ -72,6 +72,8 @@ class LiveMonitoringService:
                     "label": label,
                     "confidence": event.get("confidence"),
                     "probabilities": event.get("probabilities", {}),
+                    "src_ip": event.get("src_ip"),
+                    "dst_ip": event.get("dst_ip"),
                 }
                 self.latest_ml["source_ip"] = event.get("src_ip")
                 self.latest_ml["destination_ip"] = event.get("dst_ip")
