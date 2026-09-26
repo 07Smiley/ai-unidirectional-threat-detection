@@ -50,6 +50,7 @@ def test_linux_installer_uses_direct_package_command_when_running_as_root(monkey
         lambda name: name == "apt-get" or (name == "zeek" and state["zeek"]),
     )
     monkeypatch.setattr(installer, "_sudo_command_available", lambda: False)
+    monkeypatch.setattr(installer, "_linux_privileged", lambda command: command)
     monkeypatch.setattr(installer, "_linux_release", lambda: ("fedora", "40"))
     monkeypatch.setattr(
         installer,
