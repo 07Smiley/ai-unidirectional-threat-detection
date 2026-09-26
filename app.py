@@ -200,12 +200,12 @@ def main():
         dashboard_env = os.environ.copy()
         dashboard_env["DASHBOARD_HOST"] = DASHBOARD_HOST
         dashboard_env["DASHBOARD_PORT"] = DASHBOARD_PORT
-        dashboard = start_process([PYTHON, "dashboard.py"], "Sentry dashboard", dashboard_env)
-        processes.append(("Sentry dashboard", dashboard))
+        dashboard = start_process([PYTHON, "dashboard.py"], "Shakalaka dashboard", dashboard_env)
+        processes.append(("Shakalaka dashboard", dashboard))
         wait_for_url(
             "http://" + DASHBOARD_HOST + ":" + DASHBOARD_PORT + "/",
             dashboard,
-            "Sentry dashboard",
+            "Shakalaka dashboard",
             timeout=30.0,
         )
 
