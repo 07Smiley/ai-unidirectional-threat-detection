@@ -718,13 +718,13 @@ function applyTheme(mode){
   }
 }
 function initTheme(){
-  const saved=localStorage.getItem('sentry-theme');
+  const saved=localStorage.getItem('shakalaka-theme');
   const preferred=window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   applyTheme(saved || preferred);
 }
 document.getElementById('themeToggle').addEventListener('click',()=>{
   const next=document.body.classList.contains('light-mode')?'dark':'light';
-  localStorage.setItem('sentry-theme',next);
+  localStorage.setItem('shakalaka-theme',next);
   applyTheme(next);
 });
 
