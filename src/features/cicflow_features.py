@@ -143,7 +143,11 @@ class CICFlowExtractor:
     It does not fabricate unavailable features.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, unidirectional: bool = False) -> None:
+        # In unidirectional mode each observed 5-tuple is its own flow. This
+        # prevents a reverse-direction packet from being folded into the
+        # observed stream when the extractor is used behind a data diode.
+        self.unidirectional = unidirectional
         self._flows: dict[tuple[Any, ...], _FlowState] = {}
 
     @staticmethod
@@ -196,7 +200,7 @@ class CICFlowExtractor:
         if key in self._flows:
             state = self._flows[key]
             forward = True
-        elif reverse in self._flows:
+        elif not self.unidirectional and reverse in self._flows:
             state = self._flows[reverse]
             forward = False
         else:
