@@ -492,7 +492,7 @@ class RealDataProvider:
             # 3) Run rule-based detectors on the flow features
             threats = []
             try:
-                threats += detect_scanning(flow_df)
+                threats += detect_scanning(flow_df, min_unique_ports=8, min_connections=8)
             except Exception as e:
                 print(f"[Dashboard] Scanning detector error: {e}")
             try:
@@ -500,7 +500,7 @@ class RealDataProvider:
             except Exception as e:
                 print(f"[Dashboard] DDoS detector error: {e}")
             try:
-                threats += detect_beaconing(flow_df)
+                threats += detect_beaconing(flow_df, min_connections=8, min_span_seconds=15.0, max_interval_cv=0.35)
             except Exception as e:
                 print(f"[Dashboard] Beaconing detector error: {e}")
 
