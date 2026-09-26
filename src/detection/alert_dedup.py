@@ -34,11 +34,17 @@ class AlertDeduplicator:
         current = time.monotonic() if now is None else float(now)
         key = self.key(event)
         previous = self._last_seen.get(key)
-        self._last_seen[key] = current
 
         if previous is None:
+            self._last_seen[key] = current
             return False
-        return (current - previous) < self.window_seconds
+
+        if (current - previous) < self.window_seconds:
+            return True
+
+        # The previous suppression window expired; start a new one.
+        self._last_seen[key] = current
+        return False
 
     def clear(self) -> None:
         self._last_seen.clear()
