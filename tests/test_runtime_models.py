@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.features.unidirectional_features import UNIDIRECTIONAL_FEATURES
+from src.features.unidirectional_features import UNIDIRECTIONAL_FEATURES, transform_dataframe
 from src.models import runtime
 
 
@@ -80,3 +80,42 @@ def test_legacy_artifact_features_are_rejected(monkeypatch, tmp_path):
         assert "expects features not produced" in str(exc)
     else:
         raise AssertionError("Legacy bidirectional model should be rejected")
+
+
+def test_real_unidirectional_artifacts_predict_packet_derived_features():
+    from scapy.layers.inet import IP, TCP
+    from src.features.cicflow_features import CICFlowExtractor
+
+    def packet(ts, src, dst, sport, dport, flags):
+        p = IP(src=src, dst=dst) / TCP(sport=sport, dport=dport, flags=flags) / (b"x" * 20)
+        p.time = ts
+        return p
+
+    extractor = CICFlowExtractor()
+    extractor.add_packet(packet(1.0, "10.0.0.1", "10.0.0.2", 1234, 443, "S"))
+    extractor.add_packet(packet(1.1, "10.0.0.1", "10.0.0.2", 1234, 443, "PA"))
+    row = extractor.rows()[0]
+
+    frame = pd.DataFrame([row])
+    assert list(transform_dataframe(frame).columns) == UNIDIRECTIONAL_FEATURES
+
+    registry = runtime.RuntimeModelRegistry()
+    status = registry.status()
+
+    assert status["loaded_models"] == [
+        "bot",
+        "ddos",
+        "dos",
+        "infiltration",
+        "patator",
+        "portscan",
+        "webattack",
+    ]
+    assert status["unavailable_models"] == {}
+
+    predictions = registry.predict(frame)
+
+    assert len(predictions) == 7
+    assert {prediction["model"] for prediction in predictions} == set(status["loaded_models"])
+    assert all("label" in prediction for prediction in predictions)
+    assert all("confidence" in prediction for prediction in predictions)
