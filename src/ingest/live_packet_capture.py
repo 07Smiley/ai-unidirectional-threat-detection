@@ -21,6 +21,7 @@ class LivePacketCapture:
         poll_interval: float = 0.5,
         bpf_filter: str | None = None,
         extractor: CICFlowExtractor | None = None,
+        unidirectional: bool = True,
     ) -> None:
         if not interface:
             raise ValueError("A network interface is required.")
@@ -34,7 +35,7 @@ class LivePacketCapture:
         self.idle_timeout = idle_timeout
         self.poll_interval = poll_interval
         self.bpf_filter = bpf_filter
-        self.extractor = extractor or CICFlowExtractor()
+        self.extractor = extractor or CICFlowExtractor(unidirectional=unidirectional)
 
         self._sniffer = None
         self._monitor_thread: threading.Thread | None = None
