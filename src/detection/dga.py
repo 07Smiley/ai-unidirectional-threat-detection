@@ -87,6 +87,8 @@ def detect_dga(log_file):
                 "domain": domain,
                 "src_ip": row.get("id.orig_h", "unknown"),
                 "dst_ip": row.get("id.resp_h", "unknown"),
+                "dst_port": row.get("id.resp_p", 53),
+                "ts": row.get("ts"),
                 "severity": "medium"
             })
 
