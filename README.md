@@ -31,7 +31,8 @@ The application is designed around **passive monitoring**. It does not need to a
 - Uses a dedicated live-log directory.
 - Tails Zeek logs without requiring manual log files.
 - Extracts live flow features.
-- Runs rule-based detections for scanning, DDoS, beaconing and related traffic patterns.
+- Runs live rule-based detections for scanning, DDoS and beaconing over a rolling Zeek flow window.
+- Runs DGA and exfiltration detectors in the dashboard's Zeek-log analysis path when the required DNS/connection logs are available.
 - Has an ML runtime with model/schema validation.
 - Streams live detection events through FastAPI WebSockets.
 - Dashboard provides live interface controls, status and threat events.
@@ -43,12 +44,12 @@ The live ML engine uses a strict forward-only feature schema. It does not feed B
 features or aggregate fields such as Total Packets / Total Bytes into the ML models.
 
 The same unidirectional observation can support multiple threat families. DDoS is only one
-detector; the runtime is designed to load separate unidirectional artifacts for DDoS, DoS,
-PortScan, Infiltration, Patator, WebAttack and Bot/Net behavior. Behavioral detectors such
-as beaconing/C2, DGA/DNS, TLS/QUIC anomalies and exfiltration can operate alongside the ML
-detectors when their required features are available.
+detector; the runtime loads separate unidirectional artifacts for DDoS, DoS, PortScan,
+Infiltration, Patator, WebAttack and Bot/Net behavior. The live packet-derived ML path is
+limited to the features defined by the runtime schema. Other behavioral detectors must
+receive the telemetry they require; they are not treated as live detections merely because
+their standalone modules exist.
 
-These capabilities are useful specifically because normal bidirectional network assumptions do not always hold.
 
 ### 1. Directionality / asymmetry score
 Measure how strongly a flow behaves as one-way traffic using packet, byte and timing statistics.
@@ -93,13 +94,17 @@ Combine directionality, rate, entropy, protocol metadata and model confidence in
 | Live Zeek control | Implemented |
 | Live Zeek log reader | Implemented |
 | Live feature extraction | Implemented |
-| Rule-based live detection | Implemented |
+| Rule-based live scanning/DDoS/beaconing | Implemented |
+| Dashboard Zeek-log DGA detection | Implemented |
+| Dashboard Zeek-log exfiltration detection | Implemented |
+| Live DGA detection from DNS stream | **Not yet wired** |
+| Live TLS/QUIC anomaly detection | **Not yet implemented** |
 | FastAPI live API | Implemented |
 | WebSocket live events | Implemented |
 | Dashboard live controls | Implemented |
 | ML runtime/schema validation | Implemented |
 | ML models trained on exact live schema | Implemented |
-| ML predictions connected to dashboard verdicts | Implemented |
+| ML predictions connected to live event stream | Implemented |
 | Alert deduplication | Implemented |
 | Unidirectional-aware feature set | Implemented |
 | Full real-NIC end-to-end validation | **Remaining** |
