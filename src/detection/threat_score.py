@@ -24,6 +24,6 @@ def calculate_threat_score(events: Iterable[Mapping[str, object]]) -> float:
     return round(max(scores, default=0.0), 2)
 
 
-def response_offer(score: float, threshold: float = 75.0) -> bool:
+def response_offer(score: float, threshold: float = 92.0) -> bool:
     """Whether the UI should offer a response action; never performs it."""
     return float(score) >= float(threshold)
