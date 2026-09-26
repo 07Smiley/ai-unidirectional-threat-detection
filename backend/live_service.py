@@ -65,18 +65,19 @@ class LiveMonitoringService:
 
     def _on_event(self, event: dict[str, Any]) -> None:
         if event.get("type") == "ml_prediction":
+            # Keep the latest prediction visible even when it is benign.
+            # Response eligibility is controlled separately by threat score.
             label = str(event.get("label", ""))
-            if label.lower() not in {"benign", "normal"}:
-                self.latest_ml["prediction"] = {
-                    "model": event.get("model"),
-                    "label": label,
-                    "confidence": event.get("confidence"),
-                    "probabilities": event.get("probabilities", {}),
-                    "src_ip": event.get("src_ip"),
-                    "dst_ip": event.get("dst_ip"),
-                }
-                self.latest_ml["source_ip"] = event.get("src_ip")
-                self.latest_ml["destination_ip"] = event.get("dst_ip")
+            self.latest_ml["prediction"] = {
+                "model": event.get("model"),
+                "label": label,
+                "confidence": event.get("confidence"),
+                "probabilities": event.get("probabilities", {}),
+                "src_ip": event.get("src_ip"),
+                "dst_ip": event.get("dst_ip"),
+            }
+            self.latest_ml["source_ip"] = event.get("src_ip")
+            self.latest_ml["destination_ip"] = event.get("dst_ip")
         elif event.get("type") == "threat_score":
             self.latest_ml["score"] = float(event.get("score", 0.0))
             self.latest_ml["response_available"] = bool(event.get("response_available", False))
