@@ -66,16 +66,16 @@ class RuntimeModel:
         # The live engine accepts only the exact forward-only training schema.
         # This prevents historical/bidirectional artifacts from being loaded
         # merely because some of their columns happen to exist in live rows.
-        if self.model_type != "random_forest_unidirectional":
-            raise ModelNotAvailableError(
-                f"Model {self.path.name} is not a supported unidirectional "
-                f"runtime artifact."
-            )
         if self.features != UNIDIRECTIONAL_FEATURES:
             raise ModelNotAvailableError(
                 f"Model {self.path.name} expects features not produced by the live "
                 f"pipeline: {', '.join(self.features[:8])}"
                 + (" ..." if len(self.features) > 8 else "")
+            )
+        if self.model_type != "random_forest_unidirectional":
+            raise ModelNotAvailableError(
+                f"Model {self.path.name} is not a supported unidirectional "
+                f"runtime artifact."
             )
 
     @property
