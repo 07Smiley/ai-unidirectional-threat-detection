@@ -363,6 +363,7 @@
                                               flagged, flagged_sources, avg_confidence, model }
    GET  /api/groups                    -> [{ group_id, src_ip, host, request_count,
                                               label, confidence, last_seen }]
+   GET  /api/logs                      -> all currently loaded flows
    GET  /api/groups/<id>/logs          -> [{ id, timestamp, src_ip, dst_ip, dst_port,
                                               protocol, confidence, label,
                                               packets_per_sec, why[], features[] }]
@@ -391,7 +392,7 @@ async function loadLiveStatus(){
     const running=!!s.running;
     document.getElementById('liveStatus').textContent=running?'LIVE':'OFFLINE';
     document.getElementById('liveStart').disabled=running;
-    document.getElementById('liveStop').disabled=!running;
+    document.getElementById('liveStop').disabled=false;
     if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
     const loaded=(s.models&&s.models.loaded_models)||[];
     const latest=(s.latest_ml)||{};
@@ -461,6 +462,7 @@ function connectLiveSocket(){
       if(data.event==='connected' && data.live){
         const running=!!data.live.running;
         document.getElementById('liveStatus').textContent=running?'LIVE':'OFFLINE';
+        document.getElementById('liveStop').disabled=false;
       }
     }catch(e){}
   };
@@ -515,15 +517,26 @@ function ignoreCurrentThreat(){
   document.getElementById('responseBlock').disabled=false; lastPromptedScore=null;
 }
 async function stopLive(){
+  const button=document.getElementById('liveStop');
+  button.disabled=true;
   try{
-    await fetch(LIVE_API+'/api/live/stop',{method:'POST'});
+    const res=await fetch(LIVE_API+'/api/live/stop',{method:'POST'});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.detail||'Unable to stop live monitoring');
     document.getElementById('liveStatus').textContent='OFFLINE';
+    if(liveSocket){ try{ liveSocket.close(); }catch(e){} liveSocket=null; }
     loadStats(); loadGroups();
-  }catch(e){alert('Unable to stop live monitoring.')}
+  }catch(e){
+    button.disabled=false;
+    alert(e.message);
+  }finally{
+    if(document.getElementById('liveStatus').textContent==='OFFLINE') button.disabled=false;
+  }
 }
 
 document.getElementById('liveStart').addEventListener('click',startLive);
 document.getElementById('liveStop').addEventListener('click',stopLive);
+document.getElementById('liveStop').disabled=false;
 document.getElementById('responseBlock').addEventListener('click',blockCurrentThreat);
 document.getElementById('responseIgnore').addEventListener('click',ignoreCurrentThreat);
 
@@ -585,7 +598,6 @@ function renderGroups(){
   const list = document.getElementById('sourceList');
   if(groups.length === 0){
     list.innerHTML = '<div class="empty">No sources in range.</div>';
-    return;
   }
   list.innerHTML = groups.map(g => {
     const flagged = g.label !== 'BENIGN';
@@ -603,6 +615,18 @@ function renderGroups(){
   list.querySelectorAll('.source-row').forEach(row => {
     row.addEventListener('click', () => selectGroup(row.dataset.id));
   });
+}
+
+async function loadAllLogs(){
+  document.getElementById('logHeaderId').textContent = 'ALL FLOWS';
+  document.getElementById('logBody').innerHTML = '<div class="empty">Loading live flows…</div>';
+  try{
+    const res=await fetch('/api/logs');
+    const data=await res.json();
+    renderLogs(Array.isArray(data) ? data : []);
+  }catch(e){
+    document.getElementById('logBody').innerHTML = '<div class="empty">Unable to load live flows.</div>';
+  }
 }
 
 async function selectGroup(id){
@@ -765,6 +789,7 @@ loadInterfaces();
 loadLiveStatus();
 loadStats();
 loadGroups();
+loadAllLogs();
 
 /* --- auto-refresh polling: update stats + groups every 5 seconds,
        and refresh the selected source's logs silently (without
@@ -772,6 +797,10 @@ loadGroups();
 setInterval(async () => {
   await loadStats();
   await loadGroups();
+  // Keep the Logs panel useful even before a source is selected.
+  if(!selectedGroup){
+    await loadAllLogs();
+  }
   // If a source is selected, silently refresh its log list
   if(selectedGroup){
     try{
