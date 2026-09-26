@@ -66,10 +66,7 @@ class ZeekInstaller:
                 return str(path)
         return None
 
-    def ensure(self, auto_install: bool = True) -> InstallResult:
-        if self._command_exists("zeek") or self._command_exists("zeek.exe"):
-            return InstallResult(True, self.system, "existing", "Zeek is already installed.")
-
+    def _known_system_zeek_path(self) -> Path | None:
         # Debian/Ubuntu Zeek packages commonly install under /opt/zeek/bin,
         # which may not be present in sudo's secure PATH.
         for candidate in (
@@ -79,7 +76,16 @@ class ZeekInstaller:
             Path("/usr/bin/zeek"),
         ):
             if candidate.is_file():
-                return InstallResult(True, self.system, "existing", f"Zeek is already installed at {candidate}.")
+                return candidate
+        return None
+
+    def ensure(self, auto_install: bool = True) -> InstallResult:
+        if self._command_exists("zeek") or self._command_exists("zeek.exe"):
+            return InstallResult(True, self.system, "existing", "Zeek is already installed.")
+
+        system_zeek = self._known_system_zeek_path()
+        if system_zeek:
+            return InstallResult(True, self.system, "existing", f"Zeek is already installed at {system_zeek}.")
 
         local = self.find_local_zeek()
         if local:
