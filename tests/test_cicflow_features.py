@@ -1,5 +1,7 @@
 import pytest
-from scapy.layers.inet import IP, TCP
+from scapy.layers.inet import IP, TCP, UDP
+
+from scapy.packet import Raw
 
 from src.features.cicflow_features import CICFlowExtractor
 
@@ -53,7 +55,7 @@ def test_tcp_packet_features_match_cicflowmeter_payload_and_header_semantics():
     packet = (
         IP(src="10.0.0.1", dst="10.0.0.2")
         / TCP(sport=1234, dport=80, flags="PA")
-        / b"x" * 20
+        / Raw(b"x" * 20)
     )
     packet.time = 1.0
 
@@ -71,13 +73,11 @@ def test_tcp_packet_features_match_cicflowmeter_payload_and_header_semantics():
 
 
 def test_udp_packet_features_use_payload_and_udp_header_lengths():
-    from scapy.layers.inet import UDP
-
     extractor = CICFlowExtractor()
     packet = (
         IP(src="10.0.0.1", dst="10.0.0.2")
         / UDP(sport=1234, dport=53)
-        / b"x" * 12
+        / Raw(b"x" * 12)
     )
     packet.time = 1.0
 
