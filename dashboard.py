@@ -496,7 +496,8 @@ class RealDataProvider:
             except Exception as e:
                 print(f"[Dashboard] Scanning detector error: {e}")
             try:
-                threats += detect_ddos(flow_df)            except Exception as e:
+                threats += detect_ddos(flow_df)
+            except Exception as e:
                 print(f"[Dashboard] DDoS detector error: {e}")
             try:
                 threats += detect_beaconing(flow_df)
