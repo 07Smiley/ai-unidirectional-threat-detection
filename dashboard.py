@@ -998,3 +998,4 @@ if __name__ == "__main__":
         debug=os.environ.get("DASHBOARD_DEBUG", "0") == "1",
         threaded=True,
         use_reloader=False,
+    )
