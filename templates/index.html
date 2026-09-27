@@ -614,7 +614,7 @@ function handleThreatScoreUpdate(score){
   latestThreatScore=Number(score||0);
   updateResponsePanel();
   if(
-    latestThreatScore > RESPONSE_THRESHOLD &&
+    latestThreatScore >= RESPONSE_THRESHOLD &&
     old <= RESPONSE_THRESHOLD &&
     currentThreatIp() &&
     !ignoredIps.has(currentThreatIp())
