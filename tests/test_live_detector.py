@@ -49,7 +49,7 @@ def test_live_detector_routes_dga_exfiltration_and_encrypted_screening():
             "proto": "tcp",
             "ts": 10.0,
             "orig_bytes": 1_500_000,
-            "query": "xj3k9q7m2v8z4p1r.example.com",
+            "query": "xj3k9q7m2v8z4p1r7s6t5u4v3w2x1.example.com",
         },
     ]
 
