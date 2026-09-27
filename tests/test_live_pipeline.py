@@ -67,6 +67,7 @@ def test_pipeline_emits_ml_event():
     events = []
     pipeline.callback = events.append
     pipeline.models = FakeModels()
+    pipeline._flagged_sources.add("10.0.0.1")
 
     pipeline.process_packet_features(_packet_batch().iloc[[0]])
 
@@ -149,6 +150,8 @@ def test_multi_model_predictions_keep_each_flow_metadata():
             ]
 
     pipeline.models = MultiModelFake()
+    pipeline._flagged_sources.add("10.0.0.1")
+    pipeline._flagged_sources.add("10.0.0.3")
     pipeline.callback = events.append
     pipeline.process_packet_features(_packet_batch())
 
