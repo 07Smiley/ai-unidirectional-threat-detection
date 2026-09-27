@@ -15,9 +15,10 @@ from src.detection.threat_score import calculate_threat_evidence, response_offer
 class LiveDetectionPipeline:
     """End-to-end live Zeek -> rules + packet-derived unidirectional ML pipeline.
 
-The live rule path currently covers scanning, DDoS and beaconing. DGA,
-exfiltration and TLS/QUIC modules are not silently treated as live unless
-their required telemetry is explicitly connected.
+The live detection gate runs the available detectors in src/detection before ML.
+Scanning, DDoS, beaconing, DGA (when DNS query telemetry is present),
+forward-only exfiltration, and TLS/QUIC traffic identification can all flag a
+source. Packet-derived ML runs only after a source is flagged by this layer.
 """
 
     def __init__(
