@@ -95,7 +95,7 @@ body.light-mode .panel-head .count{background:#f1f5f8;border-color:var(--line);c
 .source-row{display:flex;align-items:center;gap:13px;padding:18px 18px;border-bottom:1px solid #1c2b36;cursor:pointer;position:relative}
 body.light-mode .source-row{border-color:var(--line)}
 .source-row:hover{background:rgba(57,189,248,.045)}.source-row.active{background:rgba(57,189,248,.07);box-shadow:inset 4px 0 0 var(--cyan)}
-.source-row .sev{width:7px;height:56px;border-radius:6px;flex-shrink:0;background:var(--red)!important}
+.source-row .sev{width:7px;height:56px;border-radius:6px;flex-shrink:0}
 .source-row .who{flex:1;min-width:0}.source-row .primary{font-size:18px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .source-row .secondary{font-size:12px;color:var(--muted);margin-top:6px}.source-row .secondary::first-letter{}
 .source-row .count-badge{display:none}.source-row .conf{width:62px;text-align:right;flex-shrink:0}
@@ -489,7 +489,7 @@ async function loadGroups(){
 
 function renderGroups(){
   const flaggedGroups = groups.filter(g => Number(g.threat_score||0) > 0);
-  document.getElementById('sourceCount').textContent = flaggedGroups.length + ' flagged sources';
+  document.getElementById('sourceCount').textContent = flaggedGroups.length + ' SOURCES';
   const list = document.getElementById('sourceList');
   if(flaggedGroups.length === 0){
     list.innerHTML = '<div class="empty">No flagged sources yet. Sources will appear here automatically when threat evidence is detected.</div>';
@@ -499,7 +499,7 @@ function renderGroups(){
     const score = Number(g.threat_score||0);
     return `
     <div class="source-row ${g.group_id===selectedGroup?'active':''}" data-id="${g.group_id}">
-      <div class="sev" style="background:var(--attention)"></div>
+      <div class="sev" style="background:${score >= 90 ? 'var(--red)' : score >= 70 ? 'var(--orange)' : 'var(--yellow)'}"></div>
       <div class="who">
         <div class="primary">${g.src_ip || g.host || 'Unknown source'}</div>
         <div class="secondary">${g.host ? g.host + ' · ' : ''}${g.label} · ${g.flagged_flows}/${g.request_count} flagged</div>
@@ -511,6 +511,9 @@ function renderGroups(){
   list.querySelectorAll('.source-row').forEach(row => {
     row.addEventListener('click', () => selectGroup(row.dataset.id));
   });
+  if(!selectedGroup && flaggedGroups.length){
+    selectGroup(flaggedGroups[0].group_id);
+  }
 }
 
 async function loadAllLogs(){
