@@ -35,3 +35,47 @@ def test_live_detector_limits_history():
     detector.process(make_scan_rows().iloc[2:])
 
     assert detector.row_count == 3
+
+
+
+def test_live_detector_routes_dga_exfiltration_and_encrypted_screening():
+    detector = LiveThreatDetector(max_rows=100)
+    rows = [
+        {
+            "id.orig_h": "10.0.0.30",
+            "id.resp_h": "10.0.0.40",
+            "id.resp_p": 443,
+            "id.orig_p": 50001,
+            "proto": "tcp",
+            "ts": 10.0,
+            "orig_bytes": 1_500_000,
+            "query": "xj3k9q7m2v8z4p1r.example.com",
+        },
+    ]
+
+    events = detector.process(pd.DataFrame(rows))
+
+    types = {event["type"] for event in events}
+    assert "possible_exfiltration" in types
+    assert "observed_tls" in types
+    assert "possible_dga" in types
+
+
+def test_live_detector_does_not_require_optional_telemetry():
+    detector = LiveThreatDetector(max_rows=100)
+
+    rows = [
+        {
+            "id.orig_h": "10.0.0.50",
+            "id.resp_h": "10.0.0.60",
+            "id.resp_p": 80,
+            "id.orig_p": 50002,
+            "proto": "tcp",
+            "ts": 20.0,
+            "orig_bytes": 100,
+        },
+    ]
+
+    events = detector.process(pd.DataFrame(rows))
+
+    assert isinstance(events, list)
