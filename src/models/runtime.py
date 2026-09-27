@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import warnings
 
 import pandas as pd
+from sklearn.exceptions import InconsistentVersionWarning
 
 from src.features.cicflow_features import CICFLOW_FEATURES
 from src.features.flow_features import FLOW_COLUMNS
@@ -53,7 +55,13 @@ class RuntimeModel:
         if not self.path.exists():
             raise ModelNotAvailableError(f"Model artifact not found: {self.path}")
 
-        artifact = joblib.load(self.path)
+        # Deployed artifacts were trained with an older compatible
+        # scikit-learn release. Suppress only this advisory while keeping
+        # the runtime pinned to the current release; schema/type checks below
+        # still reject incompatible artifacts.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+            artifact = joblib.load(self.path)
         if not isinstance(artifact, dict) or "model" not in artifact:
             raise ModelNotAvailableError(
                 f"Invalid model artifact: {self.path}. Expected a dict containing 'model'."
