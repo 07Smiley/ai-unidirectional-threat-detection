@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 import pandas as pd
+import time
 
 from src.detection.alert_dedup import AlertDeduplicator
 from src.detection.live_detector import LiveThreatDetector
@@ -31,6 +32,12 @@ their required telemetry is explicitly connected.
         self.callback = callback
         self.feature_processor = LiveFlowProcessor(callback=self._process_features)
         self._flagged_sources: set[str] = set()
+        # Packet capture and Zeek rule processing are asynchronous. Keep a
+        # short, bounded queue so a packet seen before its source is flagged
+        # is not silently discarded. ML still runs only after rule flagging.
+        self._pending_packet_features: list[tuple[float, pd.DataFrame]] = []
+        self._pending_packet_max_rows = 2000
+        self._pending_packet_ttl_seconds = 15.0
 
     def _emit(self, event: dict) -> None:
         if self.callback is not None:
@@ -144,9 +151,48 @@ their required telemetry is explicitly connected.
             )
         self._flagged_sources.update(flagged)
 
+    def _expire_pending_packet_features(self, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        cutoff = now - self._pending_packet_ttl_seconds
+        self._pending_packet_features = [
+            (created_at, frame)
+            for created_at, frame in self._pending_packet_features
+            if created_at >= cutoff and not frame.empty
+        ]
+
+    def _queue_pending_packet_features(self, features: pd.DataFrame) -> None:
+        if features.empty:
+            return
+        now = time.monotonic()
+        self._expire_pending_packet_features(now)
+        self._pending_packet_features.append((now, features.copy()))
+        total = sum(len(frame) for _, frame in self._pending_packet_features)
+        while total > self._pending_packet_max_rows and self._pending_packet_features:
+            _, oldest = self._pending_packet_features.pop(0)
+            total -= len(oldest)
+
+    def _flush_pending_for_flagged_sources(self) -> None:
+        if not self._pending_packet_features or not self._flagged_sources:
+            return
+        self._expire_pending_packet_features()
+        remaining: list[tuple[float, pd.DataFrame]] = []
+        for created_at, frame in self._pending_packet_features:
+            source_column = "src_ip" if "src_ip" in frame.columns else "id.orig_h"
+            if source_column not in frame.columns:
+                remaining.append((created_at, frame))
+                continue
+            flagged = frame[frame[source_column].astype(str).isin(self._flagged_sources)].copy()
+            if not flagged.empty:
+                self._emit_scored_ml(flagged)
+            unflagged = frame[~frame[source_column].astype(str).isin(self._flagged_sources)].copy()
+            if not unflagged.empty:
+                remaining.append((created_at, unflagged))
+        self._pending_packet_features = remaining
+
     def _process_features(self, features: pd.DataFrame) -> None:
         rule_events = self.rule_detector.process(features)
         self._remember_flagged_sources(rule_events, features)
+        self._flush_pending_for_flagged_sources()
 
         for event in rule_events:
             # Rule detectors operate on a rolling window, so the same alert
@@ -165,21 +211,29 @@ their required telemetry is explicitly connected.
         return self.models.status()
 
     def process_packet_features(self, features: pd.DataFrame) -> None:
-        """Run packet features through ML only after rule-based flagging."""
-        if features is None or features.empty or not self._flagged_sources:
+        """Run packet features through ML only after rule-based flagging.
+
+        Packet capture can race ahead of the Zeek rule stream, so unflagged
+        rows are buffered briefly and replayed when their source is flagged.
+        """
+        if features is None or features.empty:
             return
         source_column = "src_ip" if "src_ip" in features.columns else "id.orig_h"
         if source_column not in features.columns:
             return
+        self._expire_pending_packet_features()
         flagged = features[features[source_column].astype(str).isin(self._flagged_sources)].copy()
-        if flagged.empty:
-            return
-        self._emit_scored_ml(flagged)
+        if not flagged.empty:
+            self._emit_scored_ml(flagged)
+        unflagged = features[~features[source_column].astype(str).isin(self._flagged_sources)].copy()
+        if not unflagged.empty:
+            self._queue_pending_packet_features(unflagged)
 
     def reset(self) -> None:
         """Clear rolling rule state and previously flagged sources."""
         self.rule_detector.reset()
         self._flagged_sources.clear()
+        self._pending_packet_features.clear()
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
         """Process one LiveZeekReader batch."""
