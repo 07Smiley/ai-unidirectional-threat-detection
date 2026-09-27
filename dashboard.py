@@ -717,56 +717,73 @@ def get_group_logs(group_id):
 
 
 def get_group_analysis(group_id):
-    """The rule-based detection verdict for this source — shown as the first
-    message in that source's Analysis chat.    """
+    """Build the source-detail evidence shown in the SOC dashboard."""
     logs = get_group_logs(group_id)
     if not logs:
         return None
 
     flagged = [l for l in logs if l["label"] != "BENIGN"]
     total = len(logs)
+    reference = flagged or logs
+
+    protocols = [str(l.get("protocol") or "").upper() for l in reference if l.get("protocol")]
+    protocol = max(set(protocols), key=protocols.count) if protocols else "—"
+
+    ports = []
+    for l in reference:
+        port = l.get("dst_port")
+        if port not in (None, "", "-"):
+            try:
+                port = int(float(port))
+            except (TypeError, ValueError):
+                port = str(port)
+            if port not in ports:
+                ports.append(port)
+
+    timestamps = [str(l.get("timestamp")) for l in logs if l.get("timestamp")]
+    reasons = []
+    seen_reasons = set()
+    for l in flagged:
+        for reason in l.get("why", []):
+            if reason not in seen_reasons:
+                reasons.append(reason)
+                seen_reasons.add(reason)
 
     if flagged:
         worst = max(flagged, key=lambda l: l.get("confidence") or 0)
-        # Collect all unique threat types and reasons
-        all_types = set(l["label"] for l in flagged)
-        all_why = []
-        seen_why = set()
-        for l in flagged:
-            for reason in l.get("why", []):
-                if reason not in seen_why:
-                    all_why.append(reason)
-                    seen_why.add(reason)
-
-        type_str = ", ".join(sorted(all_types))
-        conf_str = f" (severity-derived confidence: {worst['confidence']*100:.0f}%)" if worst.get("confidence") else ""
-        lead = (
-            f"{len(flagged)} of {total} flow(s) from this source were flagged as "
-            f"{type_str}{conf_str}."
-        )
+        all_types = sorted(set(l["label"] for l in flagged))
+        type_str = ", ".join(all_types)
+        conf_str = f" (severity-derived confidence: {worst['confidence']*100:.0f}%)" if worst.get("confidence") is not None else ""
+        lead = f"{len(flagged)} of {total} flow(s) from this source were flagged as {type_str}{conf_str}."
         return {
             "lead": lead,
-            "bullets": all_why if all_why else ["Flagged by rule-based detection engine."],
+            "bullets": reasons or ["Flagged by rule-based detection engine."],
             "label": worst["label"],
             "confidence": worst.get("confidence"),
             "threat_score": max(float(l.get("threat_score", 0.0) or 0.0) for l in flagged),
             "total_flows": total,
             "flagged_flows": len(flagged),
+            "protocol": protocol,
+            "top_ports": ports[:8],
+            "first_seen": timestamps[0] if timestamps else "—",
+            "last_seen": timestamps[-1] if timestamps else "—",
             "top_flow": worst,
         }
-    else:
-        lead = f"All {total} flow(s) from this source look benign — no rule-based detections triggered."
-        return {
-            "lead": lead,
-            "bullets": [],
-            "label": "BENIGN",
-            "confidence": None,
-            "threat_score": 0.0,
-            "total_flows": total,
-            "flagged_flows": 0,
-            "top_flow": logs[0],
-        }
 
+    return {
+        "lead": f"All {total} flow(s) from this source look benign — no rule-based detections triggered.",
+        "bullets": [],
+        "label": "BENIGN",
+        "confidence": None,
+        "threat_score": 0.0,
+        "total_flows": total,
+        "flagged_flows": 0,
+        "protocol": protocol,
+        "top_ports": ports[:8],
+        "first_seen": timestamps[0] if timestamps else "—",
+        "last_seen": timestamps[-1] if timestamps else "—",
+        "top_flow": logs[0],
+    }
 
 CHAT_SYSTEM_PROMPT = """You are Shakalaka's per-source flow analyst. You are given ONLY the raw \
 logged flows for a single traffic source (never any other source's data) as JSON, plus a \
