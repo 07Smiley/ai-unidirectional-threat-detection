@@ -4,6 +4,27 @@ import pandas as pd
 from src.ingest.pcap_reader import read_zeek_log
 
 
+def detect_exfiltration_live(flows, threshold=1_000_000):
+    """Detect large observed-direction transfers in live flow data."""
+    if flows is None or flows.empty:
+        return []
+    if "orig_bytes" not in flows.columns:
+        return []
+    observed = pd.to_numeric(flows["orig_bytes"], errors="coerce").fillna(0)
+    alerts = []
+    for index, outbound in observed.items():
+        if float(outbound) >= float(threshold):
+            row = flows.loc[index]
+            alerts.append({
+                "type": "possible_exfiltration",
+                "src_ip": row.get("id.orig_h", "unknown"),
+                "dst_ip": row.get("id.resp_h", "unknown"),
+                "outbound_bytes": int(outbound),
+                "severity": "medium",
+            })
+    return alerts
+
+
 def detect_exfiltration(log_file):
     log_file = Path(log_file)
 
