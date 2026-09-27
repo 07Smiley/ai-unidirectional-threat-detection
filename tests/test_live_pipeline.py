@@ -168,3 +168,52 @@ def test_multi_model_predictions_keep_each_flow_metadata():
     assert scored[-1]["source_ip"] == "10.0.0.3"
     assert scored[-1]["destination_ip"] == "10.0.0.4"
     assert scored[-1]["prediction"]["model"] == "portscan"
+
+
+def test_packet_flow_is_buffered_until_rule_flags_source():
+    pipeline = LiveDetectionPipeline()
+    events = []
+    pipeline.callback = events.append
+    pipeline.models = FakeModels()
+
+    # Simulate the real race: packet capture sees the flow first.
+    pipeline.process_packet_features(_packet_batch().iloc[[0]])
+    assert not any(event["type"] == "ml_prediction" for event in events)
+    assert pipeline._pending_packet_features
+
+    # Then the Zeek/rule stream flags the source.
+    pipeline.rule_detector.process = lambda _features: [
+        {
+            "type": "possible_port_scan",
+            "severity": "high",
+            "src_ip": "10.0.0.1",
+            "dst_ip": "10.0.0.2",
+        }
+    ]
+    pipeline._process_features(_packet_batch().iloc[[0]])
+
+    predictions = [event for event in events if event["type"] == "ml_prediction"]
+    assert len(predictions) == 1
+    assert predictions[0]["src_ip"] == "10.0.0.1"
+    assert predictions[0]["label"] == "DDoS"
+    assert pipeline._pending_packet_features == []
+
+
+def test_reset_clears_pending_packet_buffer():
+    pipeline = LiveDetectionPipeline()
+    pipeline.process_packet_features(_packet_batch().iloc[[0]])
+
+    assert pipeline._pending_packet_features
+    pipeline.reset()
+
+    assert pipeline._pending_packet_features == []
+    assert pipeline._flagged_sources == set()
+
+
+def test_pending_packet_buffer_is_bounded():
+    pipeline = LiveDetectionPipeline()
+    pipeline._pending_packet_max_rows = 1
+
+    pipeline.process_packet_features(_packet_batch())
+
+    assert sum(len(frame) for _, frame in pipeline._pending_packet_features) <= 1
