@@ -526,8 +526,9 @@ function updateResponsePanel(){
   panel.hidden=!eligible; if(!eligible) return;
   const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
   document.getElementById('responseTitle').textContent='THREAT RESPONSE AVAILABLE';
+  const model=latestMlPrediction&&latestMlPrediction.model?latestMlPrediction.model:'UNIDIRECTIONAL ML';
   document.getElementById('responseDetail').textContent=label+' detected from '+ip+' · score '+latestThreatScore.toFixed(0)+'%';
-  document.getElementById('responseMeta').textContent='Manual IP blocker · threshold '+RESPONSE_THRESHOLD+'% · no automatic blocking';
+  document.getElementById('responseMeta').textContent=model+' · '+RESPONSE_THRESHOLD+'% threshold · manual confirmation · no automatic blocking';
 }
 async function blockCurrentThreat(){
   const ip=currentThreatIp(); if(!ip || latestThreatScore<RESPONSE_THRESHOLD) return;
@@ -592,9 +593,10 @@ async function loadStats(){
       {label:'Flows analyzed', value:total.toLocaleString(), sub:s.flows_analyzed_window || '—', cls:''},
       {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flagged flows · ' + flagPct + '% of total', cls:'flag'},
       {label:'Rule confidence', value:fmtConf(s.avg_confidence), sub:'rule-based flagged flows', cls:'ok'},
-      {label:'ML confidence', value:latestMlPrediction ? fmtConf(latestMlPrediction.confidence) : '—', sub:latestMlPrediction ? ('latest '+(latestMlPrediction.label||'prediction')) : 'waiting for ML inference', cls:latestMlPrediction && Number(latestMlPrediction.confidence||0) >= 0.92 ? 'flag' : ''},
+      {label:'ML confidence', value:latestMlPrediction ? fmtConf(latestMlPrediction.confidence) : '—', sub:latestMlPrediction ? ((latestMlPrediction.model||'ML')+' · '+(latestMlPrediction.label||'prediction')) : 'waiting for ML inference', cls:latestMlPrediction && Number(latestMlPrediction.confidence||0) >= 0.92 ? 'flag' : ''},
+      {label:'Threat score', value:latestThreatScore.toFixed(0)+'%', sub:latestMlPrediction ? 'strongest malicious model confidence' : 'waiting for ML inference', cls:latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : ''},
       {label:'ML engine', value:liveModelLabel.replace('UNIDIRECTIONAL ML · ','') || 'OFFLINE', sub:'forward-only inference · 15 features', cls:''},
-      {label:'Threat response', value:latestThreatScore >= RESPONSE_THRESHOLD ? 'AVAILABLE' : 'MANUAL', sub:'manual block at '+RESPONSE_THRESHOLD+'%+', cls:latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : ''}
+      {label:'Threat response', value:latestThreatScore >= RESPONSE_THRESHOLD ? 'AVAILABLE' : 'MANUAL', sub:'manual block at '+RESPONSE_THRESHOLD+'% · confirmation required', cls:latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : ''}
     ];
     document.getElementById('statStrip').innerHTML = strip.map(s => `
       <div class="stat ${s.cls}">
