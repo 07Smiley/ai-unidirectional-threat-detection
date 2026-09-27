@@ -145,6 +145,7 @@ class LiveMonitoringService:
         self.loop = loop
         self.stop_event.clear()
         self.error = None
+        self.pipeline.reset()
         self.latest_ml = {
             "score": 0.0,
             "response_available": False,
