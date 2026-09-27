@@ -178,6 +178,7 @@ their required telemetry is explicitly connected.
 
     def reset(self) -> None:
         """Clear rolling rule state and previously flagged sources."""
+        self.rule_detector.reset()
         self._flagged_sources.clear()
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
