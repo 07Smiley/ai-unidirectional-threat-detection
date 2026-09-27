@@ -217,3 +217,105 @@ def test_pending_packet_buffer_is_bounded():
     pipeline.process_packet_features(_packet_batch())
 
     assert sum(len(frame) for _, frame in pipeline._pending_packet_features) <= 1
+
+
+
+def test_rule_gate_routes_flagged_source_through_all_seven_unidirectional_models():
+    pipeline = LiveDetectionPipeline()
+    events = []
+    pipeline.callback = events.append
+
+    class SevenModelFake:
+        models = {
+            "bot": object(),
+            "ddos": object(),
+            "dos": object(),
+            "infiltration": object(),
+            "patator": object(),
+            "portscan": object(),
+            "webattack": object(),
+        }
+
+        def status(self):
+            return {"loaded_models": list(self.models), "unavailable_models": {}}
+
+        def predict(self, features):
+            assert list(features.columns) == [
+                "src_ip",
+                "dst_ip",
+                "src_port",
+                "dst_port",
+                "protocol",
+                "Destination Port",
+                "Total Fwd Packets",
+                "Total Length of Fwd Packets",
+                "Fwd Packet Length Max",
+                "Fwd Packet Length Min",
+                "Fwd Packet Length Mean",
+                "Fwd Packet Length Std",
+                "Fwd IAT Total",
+                "Fwd IAT Mean",
+                "Fwd IAT Std",
+                "Fwd IAT Max",
+                "Fwd IAT Min",
+                "Fwd PSH Flags",
+                "Fwd URG Flags",
+                "Fwd Header Length",
+            ]
+            return [
+                {
+                    "model": name,
+                    "label": name.upper(),
+                    "confidence": 0.90,
+                }
+                for name in self.models
+            ]
+
+    pipeline.models = SevenModelFake()
+    pipeline.rule_detector.process = lambda _features: [
+        {
+            "type": "possible_port_scan",
+            "severity": "high",
+            "src_ip": "10.0.0.1",
+            "dst_ip": "10.0.0.2",
+        }
+    ]
+
+    # Rule stage flags the source first.
+    pipeline._process_features(_packet_batch().iloc[[0]])
+
+    # The same source can now enter packet-derived ML.
+    pipeline.process_packet_features(_packet_batch().iloc[[0]])
+
+    predictions = [event for event in events if event["type"] == "ml_prediction"]
+    assert len(predictions) == 7
+    assert {event["model"] for event in predictions} == set(SevenModelFake.models)
+    assert all(event["src_ip"] == "10.0.0.1" for event in predictions)
+    assert pipeline._pending_packet_features == []
+
+
+def test_unflagged_source_does_not_reach_any_ml_model():
+    pipeline = LiveDetectionPipeline()
+    calls = []
+
+    class TrackingSevenModels:
+        models = {name: object() for name in (
+            "bot", "ddos", "dos", "infiltration",
+            "patator", "portscan", "webattack",
+        )}
+
+        def status(self):
+            return {"loaded_models": list(self.models), "unavailable_models": {}}
+
+        def predict(self, features):
+            calls.append(features.copy())
+            return []
+
+    pipeline.models = TrackingSevenModels()
+    pipeline.rule_detector.process = lambda _features: []
+
+    pipeline._process_features(_packet_batch().iloc[[0]])
+    pipeline.process_packet_features(_packet_batch().iloc[[0]])
+
+    assert calls == []
+    assert pipeline._pending_packet_features
