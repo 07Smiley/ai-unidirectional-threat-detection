@@ -537,8 +537,7 @@ class RealDataProvider:
                             if avg_interval is not None:
                                 why.append(f"Average interval between connections: {avg_interval:.2f}s")
                         elif ttype == "possible_exfiltration":
-                            why.append(f"Large outbound transfer: {t.get('outbound_bytes', '?')} bytes sent")
-                            why.append(f"Outbound ratio: {t.get('outbound_ratio', '?')}")
+                            why.append(f"Large observed-direction transfer: {t.get('outbound_bytes', '?')} bytes sent")
                         elif ttype == "possible_dga":
                             why.append(f"Suspicious domain queried: {t.get('domain', '?')}")
                         break  # Use first matching threat
@@ -588,9 +587,8 @@ class RealDataProvider:
                     "why": why,
                     "features": [
                         {"name": "Duration", "value": f"{duration:.3f}s"},
-                        {"name": "Orig Bytes", "value": f"{int(orig_bytes)}"},
-                        {"name": "Resp Bytes", "value": f"{int(resp_bytes)}"},
-                        {"name": "Total Packets", "value": f"{int(total_pkts)}"},
+                        {"name": "Observed Bytes", "value": f"{int(orig_bytes)}"},
+                        {"name": "Observed Packets", "value": f"{int(orig_pkts)}"},
                         {"name": "Packet Rate", "value": f"{packet_rate:.1f} pkt/s"},
                     ],
                 })
