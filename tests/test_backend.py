@@ -232,10 +232,27 @@ def test_dashboard_groups_are_sorted_by_threat_score(monkeypatch):
     assert groups[0]["flagged_flows"] == 1
 
 
-def test_dashboard_flow_payload_exposes_threat_score():
+def test_dashboard_group_analysis_includes_threat_score(monkeypatch):
     import dashboard
 
-    assert "threat_score" in dashboard.RealDataProvider.__doc__ or True
+    class FakeProvider:
+        def get_flows(self):
+            return [{
+                "src_ip": "10.0.0.20",
+                "timestamp": "10:00:00",
+                "timestamp_epoch": 10,
+                "label": "DDOS",
+                "confidence": 0.85,
+                "threat_score": 85.0,
+                "why": ["24 connections", "6 unique sources"],
+            }]
+
+    monkeypatch.setattr(dashboard, "_data_provider", FakeProvider())
+    analysis = dashboard.get_group_analysis("10.0.0.20")
+
+    assert analysis["threat_score"] == 85.0
+    assert analysis["flagged_flows"] == 1
+    assert analysis["total_flows"] == 1
 
 
 def test_gemini_status_never_exposes_api_key(monkeypatch):
