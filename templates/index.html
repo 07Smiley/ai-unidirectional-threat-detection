@@ -60,6 +60,31 @@ body.light-mode .stat{background:#fff;border-color:var(--line)}
 .threat-modal .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}.threat-modal button{border-radius:999px;padding:11px 18px;font-weight:850;text-transform:uppercase;cursor:pointer}
 .threat-modal .block{background:#ef4444;color:#fff;border:1px solid #ef4444}.threat-modal .ignore{background:transparent;color:#fff;border:1px solid #52606d}
 .main{display:grid;grid-template-columns:40% 60%;gap:20px;align-items:start}
+.main{grid-template-columns:40% 60%}
+.flagged-panel,.traffic-panel{min-height:570px}
+.source-list{min-height:508px;max-height:570px}
+.traffic-panel .source-detail{min-height:245px}
+.analysis-panel{width:100%}
+.analysis-panel .chat-wrap{height:210px;display:grid;grid-template-columns:2fr 1fr}
+.analysis-panel .chat-log{border-right:1px solid var(--line);min-width:0}
+.analysis-panel .chat-input-row{align-self:center;border-top:0;display:flex;padding:22px}
+.analysis-panel .chat-input{min-width:0}
+.detail-verdict{display:inline-block;margin-left:8px;background:#c72e3a;color:#fff;border-radius:8px;padding:5px 9px;font-size:13px;vertical-align:middle}
+.detail-title .secondary{font-size:12px}
+.traffic-panel .source-detail .detail-reasons{margin-left:auto;max-width:42%}
+.traffic-panel .source-detail{position:relative}
+.traffic-panel .source-detail .detail-grid{padding-right:45%}
+.traffic-panel .source-detail .detail-reasons{position:absolute;right:22px;top:72px;width:40%;margin-top:0}
+.live-status{display:none!important}
+@media(max-width:1100px){
+ .main{grid-template-columns:1fr}
+ .flagged-panel,.traffic-panel{min-height:auto}
+ .source-list{min-height:0;max-height:420px}
+ .traffic-panel .source-detail .detail-grid{padding-right:0}
+ .traffic-panel .source-detail .detail-reasons{position:static;width:auto;max-width:none;margin-top:16px}
+ .analysis-panel .chat-wrap{grid-template-columns:1fr;height:300px}
+ .analysis-panel .chat-log{border-right:0;border-bottom:1px solid var(--line)}
+}
 .panel{background:linear-gradient(145deg,#0d1822,#0b141d);border:1px solid #1e303d;border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
 body.light-mode .panel{background:#fff;border-color:var(--line)}
 .panel-head{height:62px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;border-bottom:1px solid var(--line)}
@@ -129,25 +154,23 @@ body.light-mode .log-row{border-color:var(--line)}
     </div>
   </div>
   <div class="main">
-    <section class="panel">
+    <section class="panel flagged-panel">
       <div class="panel-head"><h2>Flagged Sources</h2><span class="count" id="sourceCount">0 SOURCES</span></div>
       <div class="source-list" id="sourceList"></div>
     </section>
-    <div class="right-col">
-      <section class="panel">
-        <div class="panel-head"><h2>Source Details</h2><span class="count" id="logHeaderId">—</span></div>
-        <div class="source-detail" id="sourceDetail" hidden></div>
-        <div id="logBody"><div class="empty">Select a flagged source to inspect its flows.</div></div>
-      </section>
-      <section class="panel analysis-panel">
-        <div class="panel-head"><h2>Gemini AI Analysis</h2><span class="gemini-status" id="geminiStatus">GEMINI · CHECKING</span></div>
-        <div class="chat-wrap">
-          <div class="chat-log" id="chatLog"><div class="chat-row bot"><div class="bubble">Select a source to load its analysis.</div></div></div>
-          <form class="chat-input-row" id="chatForm"><input class="chat-input" id="chatInput" type="text" placeholder="Ask Gemini about this source…" autocomplete="off" disabled><button class="chat-send" type="submit" id="chatSend">ASK</button></form>
-        </div>
-      </section>
-    </div>
+    <section class="panel traffic-panel">
+      <div class="panel-head"><h2>Source Details</h2><span class="count" id="logHeaderId">ALL FLOWS</span></div>
+      <div class="source-detail" id="sourceDetail" hidden></div>
+      <div id="logBody"><div class="empty">No logged flows yet. Start live monitoring.</div></div>
+    </section>
   </div>
+  <section class="panel analysis-panel">
+    <div class="panel-head"><h2>✦ Gemini AI Analysis</h2><span class="gemini-status" id="geminiStatus">GEMINI · CHECKING</span></div>
+    <div class="chat-wrap">
+      <div class="chat-log" id="chatLog"><div class="chat-row bot"><div class="bubble">Select a flagged source to load its analysis.</div></div></div>
+      <form class="chat-input-row" id="chatForm"><input class="chat-input" id="chatInput" type="text" placeholder="Ask Gemini about this source…" autocomplete="off" disabled><button class="chat-send" type="submit" id="chatSend">➤ ASK</button></form>
+    </div>
+  </section>
 </div>
 
 <script>
@@ -549,10 +572,9 @@ function renderSourceDetail(id, analysis, logs){
       <div class="detail-metric"><div class="k">Last seen</div><div class="v">${analysis.last_seen||'—'}</div></div>
     </div>
     <div class="detail-reasons"><strong>Why flagged?</strong>${reasons.length?reasons.map(x=>'• '+x).join('<br>'):'• Suspicious traffic evidence detected.'}<br>• ML model confidence: ${fmtConf(analysis.confidence)}</div>
-    <button class="live-btn" id="geminiAnalyzeBtn" type="button" style="margin-top:12px">✦ ANALYZE WITH GEMINI</button>
+    
   `;
-  const geminiBtn=document.getElementById('geminiAnalyzeBtn');
-  if(geminiBtn) geminiBtn.addEventListener('click',()=>askQuestion(`Analyze source ${id}. Explain the strongest threat evidence, identify the most suspicious flows, and tell me what I should verify next. Use only this source's logged data.`));
+
 }
 
 function renderLogs(logs, emptyMessage='No logged flows for this source.'){
