@@ -79,3 +79,20 @@ def test_live_detector_does_not_require_optional_telemetry():
     events = detector.process(pd.DataFrame(rows))
 
     assert isinstance(events, list)
+
+
+def test_live_detector_routes_ml_candidate_gates():
+    detector = LiveThreatDetector(max_rows=100)
+    rows = []
+    for index in range(8):
+        rows.append({
+            "id.orig_h": "10.0.0.70",
+            "id.resp_h": "10.0.0.80",
+            "id.resp_p": 22,
+            "id.orig_p": 40000 + index,
+            "ts": float(index),
+            "conn_state": "SF",
+        })
+    events = detector.process(pd.DataFrame(rows))
+    gates = {event.get("gate") for event in events if event.get("gate")}
+    assert "patator" in gates
