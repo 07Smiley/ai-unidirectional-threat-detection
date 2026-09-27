@@ -547,7 +547,8 @@ function connectLiveSocket(){
       if(data.event==='connected' && data.live){
         const running=!!data.live.running;
         document.getElementById('liveStatus').textContent=running?'LIVE':'OFFLINE';
-        document.getElementById('liveStop').disabled=false;
+        document.getElementById('liveStart').disabled=running;
+        document.getElementById('liveStop').disabled=!running;
       }
     }catch(e){}
   };
