@@ -765,7 +765,15 @@ function renderSourceDetail(id, analysis, logs){
       <div class="detail-metric"><div class="k">Rule evidence</div><div class="v">${fmtConf(analysis.confidence)}</div></div>
     </div>
     <div class="detail-reasons"><strong>Why:</strong> ${reasons.length ? reasons.join(' · ') : 'No rule evidence triggered.'}</div>
+    <button class="response-btn" id="geminiAnalyzeBtn" type="button" style="margin-top:12px">Analyze with Gemini</button>
   `;
+  const geminiBtn=document.getElementById('geminiAnalyzeBtn');
+  if(geminiBtn){
+    geminiBtn.addEventListener('click',()=>{
+      const prompt=`Analyze source ${id}. Explain the strongest threat evidence, identify the most suspicious flows, and tell me what I should verify next. Use only this source's logged data.`;
+      askQuestion(prompt);
+    });
+  }
 }
 
 function renderLogs(logs){
