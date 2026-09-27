@@ -30,6 +30,7 @@ their required telemetry is explicitly connected.
         self.models = RuntimeModelRegistry(model_paths)
         self.callback = callback
         self.feature_processor = LiveFlowProcessor(callback=self._process_features)
+        self._flagged_sources: set[str] = set()
 
     def _emit(self, event: dict) -> None:
         if self.callback is not None:
@@ -125,8 +126,27 @@ their required telemetry is explicitly connected.
         )
         return ml_events
 
+    @staticmethod
+    def _source_ip(row: pd.Series) -> str | None:
+        for column in ("src_ip", "id.orig_h"):
+            if column in row.index and pd.notna(row[column]):
+                return str(row[column])
+        return None
+
+    def _remember_flagged_sources(self, rule_events: list[dict], features: pd.DataFrame) -> None:
+        flagged = {str(event["src_ip"]) for event in rule_events if event.get("src_ip")}
+        ddos_destinations = {str(event["dst_ip"]) for event in rule_events if event.get("type") == "possible_ddos" and event.get("dst_ip")}
+        if ddos_destinations and "id.resp_h" in features.columns:
+            flagged.update(
+                str(row["id.orig_h"])
+                for _, row in features[features["id.resp_h"].astype(str).isin(ddos_destinations)].iterrows()
+                if pd.notna(row.get("id.orig_h"))
+            )
+        self._flagged_sources.update(flagged)
+
     def _process_features(self, features: pd.DataFrame) -> None:
         rule_events = self.rule_detector.process(features)
+        self._remember_flagged_sources(rule_events, features)
 
         for event in rule_events:
             # Rule detectors operate on a rolling window, so the same alert
@@ -137,20 +157,28 @@ their required telemetry is explicitly connected.
                 continue
             self._emit({"source": "rule", **event})
 
-        # Zeek conn.log provides telemetry for rule detection. It does not
-        # contain the packet-level fields required by the canonical 15-feature
-        # unidirectional ML schema, so ML inference is intentionally handled
-        # only by process_packet_features() using CICFlow packet features.
+        # Zeek/rule detection is the first gate. Packet ML is only allowed to
+        # judge source IPs that the rule layer has already flagged.
 
     @property
     def model_status(self) -> dict:
         return self.models.status()
 
     def process_packet_features(self, features: pd.DataFrame) -> None:
-        """Run packet-derived CICFlow features through the trained ML models."""
-        if features is None or features.empty:
+        """Run packet features through ML only after rule-based flagging."""
+        if features is None or features.empty or not self._flagged_sources:
             return
-        self._emit_scored_ml(features)
+        source_column = "src_ip" if "src_ip" in features.columns else "id.orig_h"
+        if source_column not in features.columns:
+            return
+        flagged = features[features[source_column].astype(str).isin(self._flagged_sources)].copy()
+        if flagged.empty:
+            return
+        self._emit_scored_ml(flagged)
+
+    def reset(self) -> None:
+        """Clear rolling rule state and previously flagged sources."""
+        self._flagged_sources.clear()
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
         """Process one LiveZeekReader batch."""
