@@ -2,177 +2,271 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Shakalaka — Unidirectional Threat Detection</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Sentry — Unidirectional Threat Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#071018; --bg2:#0b141d; --panel:#0e1923; --panel2:#101d28;
-  --line:#20303d; --text:#eef4f8; --muted:#91a2b2; --cyan:#39bdf8;
-  --green:#43d17a; --red:#ff4757; --orange:#ff8b2c; --yellow:#ffd23f;
-  --shadow:0 12px 32px rgba(0,0,0,.28); --radius:12px;
-  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+  /* Spasex tokens */
+  --primary:#000000; --ink:#000000; --on-primary:#ffffff; --on-primary-mute:#f0f0fa;
+  --canvas-night:#000000; --canvas-night-soft:#0a0a0a;
+  --hairline-on-dark:#3a3a3f;
+  /* functional-only exceptions: the brand is strictly black/white, but a
+     threat dashboard needs a severity signal. Kept to a single red, used
+     nowhere else. */
+  --sev-high:#ff3b30; --sev-mid:#ffffff; --sev-low:#8a8a90;
+
+  --bg:var(--canvas-night); --panel:var(--canvas-night-soft); --line:var(--hairline-on-dark);
+  --text:var(--on-primary); --muted:var(--on-primary-mute); --dim:#8a8a90;
+  --header-h:76px;
+  font-family:Inter,"Arial Narrow",Arial,Verdana,sans-serif;
+}
+/* Light-mode token swap (Spasex shop-site palette). Every rule below
+   references these variables, so overriding them here is enough to
+   re-skin the whole page — no separate light-mode ruleset needed. */
+body.light-mode{
+  --canvas-night:#ffffff; --canvas-night-soft:#f0f0fa;
+  --hairline-on-dark:#e0e0e8;
+  --on-primary:#000000; --on-primary-mute:#5a5a5f; --dim:#7a7a82;
+  --sev-mid:#000000;
+  color-scheme:light;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{color-scheme:dark}
-body{background:radial-gradient(circle at 15% -10%,#102231 0,#071018 38%,#050b10 100%);color:var(--text);min-height:100vh;line-height:1.45}
-body.light-mode{--bg:#f3f6f9;--bg2:#fff;--panel:#fff;--panel2:#f8fafc;--line:#d7e0e7;--text:#15202b;--muted:#607080;--cyan:#087fba;--shadow:0 10px 28px rgba(20,40,60,.10);background:#f3f6f9;color:var(--text)}
-button,input,select{font:inherit}
-header{height:86px;background:rgba(7,16,24,.94);border-bottom:1px solid #172631;display:flex;align-items:center;gap:28px;padding:0 38px;position:sticky;top:0;z-index:20;backdrop-filter:blur(12px)}
-body.light-mode header{background:rgba(255,255,255,.94);border-color:var(--line)}
-.brand{display:flex;align-items:center;gap:14px;min-width:310px}
-.brand svg{width:46px;height:46px;color:#43c9ff;filter:drop-shadow(0 0 8px rgba(57,189,248,.22))}
-.brand-text h1{font-size:25px;font-weight:900;letter-spacing:.8px}
-.brand-text p{font-size:12px;color:#a7b8c7;text-transform:uppercase;letter-spacing:.65px;margin-top:1px}
-body.light-mode .brand-text p{color:var(--muted)}
-.model-badge{margin-left:auto;border:1px solid #329bd0;color:#d9f3ff;border-radius:999px;padding:10px 20px;font-size:14px;font-weight:800;letter-spacing:.4px;white-space:nowrap;background:rgba(15,55,75,.28)}
-.live-controls{display:flex;align-items:center;gap:12px}
-.live-select{height:46px;background:#111d28;color:var(--text);border:1px solid #293a48;border-radius:12px;padding:0 14px;min-width:150px;outline:none}
-body.light-mode .live-select{background:#fff;border-color:var(--line)}
-.live-btn{height:46px;border-radius:12px;padding:0 20px;border:1px solid #273947;background:#13212c;color:var(--text);font-size:13px;font-weight:850;text-transform:uppercase;letter-spacing:.35px;cursor:pointer}
-.live-btn:not(.secondary){background:linear-gradient(135deg,#46d17d,#31c56e);border-color:#43d17a;color:#06130b}
-.live-btn.secondary{color:#8d9eac}
-.live-btn:disabled{opacity:.4;cursor:not-allowed}
-.live-status{font-size:10px;font-weight:800;letter-spacing:.7px;color:var(--green);white-space:nowrap}
-.theme-toggle{height:46px;background:transparent;border:0;color:var(--text);font-weight:800;cursor:pointer;white-space:nowrap}
-.shell{max-width:1500px;margin:0 auto;padding:32px 34px 48px;display:flex;flex-direction:column;gap:22px}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
-.stat{position:relative;min-height:112px;background:linear-gradient(145deg,#0f1b25,#0b151e);border:1px solid #20313f;border-radius:12px;padding:22px 24px 18px 128px;overflow:hidden;box-shadow:var(--shadow)}
-body.light-mode .stat{background:#fff;border-color:var(--line)}
-.stat::before{content:"";position:absolute;left:16px;top:15px;width:66px;height:66px;border-radius:12px;background:#102536;border:1px solid #1c3c52}.stat-icon{position:absolute;left:33px;top:27px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:10px;color:#45bff8;font-size:28px;font-weight:900;z-index:1}.stat.flag .stat-icon{color:#ff5965}
-.stat.flag::before{background:#291c21;border-color:#4d2830}
-.stat .label{font-size:13px;color:#d6e0e7;font-weight:800;text-transform:uppercase;letter-spacing:.5px}
-.stat .value{font-size:37px;line-height:1.05;font-weight:900;margin-top:7px}
-.stat .sub{font-size:11px;color:var(--muted);margin-top:5px}
-.stat.flag .value{color:#ff4c58}.stat.ok .value{color:var(--green)}
-.stat::after{content:"";position:absolute;right:18px;bottom:16px;width:145px;height:34px;opacity:.35;background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(57,189,248,.8) 5px 9px,transparent 9px 13px);clip-path:polygon(0 90%,8% 70%,16% 78%,24% 50%,32% 65%,40% 28%,48% 55%,56% 15%,64% 45%,72% 20%,80% 42%,88% 12%,100% 0,100% 100%,0 100%)}
-.stat:nth-child(2)::after{background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(255,71,87,.9) 5px 9px,transparent 9px 13px)}
-.stat:nth-child(3)::after{background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(255,71,87,.9) 5px 9px,transparent 9px 13px)}
-.response-panel{display:flex;align-items:center;justify-content:space-between;gap:18px;background:linear-gradient(145deg,#1a1215,#130e11);border:1px solid #6d2d36;border-radius:12px;padding:16px 20px;box-shadow:var(--shadow)}
-.response-panel[hidden]{display:none!important}
-.response-title{font-size:14px;font-weight:900;color:#ff6670;letter-spacing:.3px}
-.response-detail{font-size:13px;margin-top:4px}.response-meta{font-size:11px;color:var(--muted);margin-top:3px}.response-panel>div:last-child{display:flex;gap:10px;flex-shrink:0}
-.threat-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999;backdrop-filter:blur(7px)}
-.threat-modal-backdrop[hidden]{display:none!important}
-.threat-modal{width:min(560px,100%);background:#0b1117;border:1px solid var(--red);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.6);padding:26px;color:#fff}
-.threat-modal .kicker{font-size:11px;font-weight:900;letter-spacing:1px;color:#ff6b76;text-transform:uppercase}
-.threat-modal h3{font-size:25px;margin:6px 0}.threat-modal .score{font-size:46px;font-weight:950;color:#ff4b59}
-.threat-modal .meta{font-size:14px;color:#c5d0d9;line-height:1.7}.threat-modal .meta strong{color:#fff}
-.threat-modal .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}.threat-modal button{border-radius:999px;padding:11px 18px;font-weight:850;text-transform:uppercase;cursor:pointer}
-.threat-modal .block{background:#ef4444;color:#fff;border:1px solid #ef4444}.threat-modal .ignore{background:transparent;color:#fff;border:1px solid #52606d}
-.main{display:grid;grid-template-columns:40% 60%;gap:20px;align-items:start}
-.main{grid-template-columns:40% 60%}
-.flagged-panel,.traffic-panel{min-height:570px}
-.source-list{min-height:508px;max-height:570px}
-.traffic-panel .source-detail{min-height:245px}
-.analysis-panel{width:100%}
-.analysis-panel .chat-wrap{height:210px;display:grid;grid-template-columns:2fr 1fr}
-.analysis-panel .chat-log{border-right:1px solid var(--line);min-width:0}
-.analysis-panel .chat-input-row{align-self:center;border-top:0;display:flex;padding:22px}
-.analysis-panel .chat-input{min-width:0}
-.detail-verdict{display:inline-block;margin-left:8px;background:#c72e3a;color:#fff;border-radius:8px;padding:5px 9px;font-size:13px;vertical-align:middle}
-.detail-title .secondary{font-size:12px}
-.traffic-panel .source-detail .detail-reasons{margin-left:auto;max-width:42%}
-.traffic-panel .source-detail{position:relative}
-.traffic-panel .source-detail .detail-grid{padding-right:45%}
-.traffic-panel .source-detail .detail-reasons{position:absolute;right:22px;top:72px;width:40%;margin-top:0}
-.live-status{display:none!important}
-@media(max-width:1100px){
- .main{grid-template-columns:1fr}
- .flagged-panel,.traffic-panel{min-height:auto}
- .source-list{min-height:0;max-height:420px}
- .traffic-panel .source-detail .detail-grid{padding-right:0}
- .traffic-panel .source-detail .detail-reasons{position:static;width:auto;max-width:none;margin-top:16px}
- .analysis-panel .chat-wrap{grid-template-columns:1fr;height:300px}
- .analysis-panel .chat-log{border-right:0;border-bottom:1px solid var(--line)}
+html{height:100%;color-scheme:dark}
+body{
+  background:var(--bg);color:var(--text);line-height:1.5;
+  min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
 }
-.panel{background:linear-gradient(145deg,#0d1822,#0b141d);border:1px solid #1e303d;border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
-body.light-mode .panel{background:#fff;border-color:var(--line)}
-.panel-head{height:62px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;border-bottom:1px solid var(--line)}
-.panel-head h2{font-size:17px;font-weight:900;letter-spacing:.25px;text-transform:uppercase}
-.panel-head .count{font-size:11px;color:#b7c6d2;background:#162733;border:1px solid #29404f;border-radius:999px;padding:6px 12px;text-transform:uppercase;font-weight:800}
-body.light-mode .panel-head .count{background:#f1f5f8;border-color:var(--line);color:var(--muted)}
-.source-list{max-height:520px;overflow-y:auto}
-.source-row{display:flex;align-items:center;gap:13px;padding:18px 18px;border-bottom:1px solid #1c2b36;cursor:pointer;position:relative}
-body.light-mode .source-row{border-color:var(--line)}
-.source-row:hover{background:rgba(57,189,248,.045)}.source-row.active{background:rgba(57,189,248,.07);box-shadow:inset 4px 0 0 var(--cyan)}
-.source-row .sev{width:7px;height:56px;border-radius:6px;flex-shrink:0}
-.source-row .who{flex:1;min-width:0}.source-row .primary{font-size:18px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.source-row .secondary{font-size:12px;color:var(--muted);margin-top:6px}.source-row .secondary::first-letter{}
-.source-row .count-badge{display:none}.source-row .conf{width:62px;text-align:right;flex-shrink:0}
-.source-row .score-label{display:none}.source-row .score-value{display:inline-block;font-size:13px;font-weight:900;background:#681d27;color:#fff;border-radius:8px;padding:7px 10px}
-.source-row:nth-child(n+3) .score-value{background:#6b4414}.source-row:nth-child(n+5) .score-value{background:#5d5515}
-.right-col{display:flex;flex-direction:column;gap:18px}
-.source-detail{padding:20px 22px;border-bottom:1px solid var(--line);background:#0c1720}.source-detail[hidden]{display:none!important}
-body.light-mode .source-detail{background:#fff}
-.detail-title{display:flex;justify-content:space-between;gap:18px;align-items:flex-start}.detail-title .ip{font-size:27px;font-weight:900}.detail-title .secondary{font-size:11px;color:var(--muted);margin-top:5px}
-.detail-title .verdict{font-size:12px;font-weight:900;color:#ff5965;border:1px solid #e34b58;background:#35191e;border-radius:8px;padding:7px 11px;text-transform:uppercase}
-.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}.detail-metric{border:0;padding:0 4px}.detail-metric .k{font-size:11px;color:var(--muted)}.detail-metric .v{font-size:14px;font-weight:800;margin-top:3px}
-.detail-reasons{margin-top:16px;background:#21161a;border:1px solid #4a252d;border-radius:10px;padding:14px 15px;font-size:12px;color:#d5dee5;line-height:1.7}
-.detail-reasons strong{display:block;color:#ff6b73;text-transform:uppercase;margin-bottom:5px}
-.log-list{max-height:300px;overflow:auto}.log-row{display:grid;grid-template-columns:82px 1.5fr 72px 80px 72px 90px 90px;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid #1c2b36;font-size:11px}
-body.light-mode .log-row{border-color:var(--line)}
-.log-table-head{display:grid;grid-template-columns:82px 1.5fr 72px 80px 72px 90px 90px;gap:8px;padding:9px 16px;color:#8497a7;font-size:9px;font-weight:850;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--line)}
-.log-row .time,.log-row .path,.log-row .meta,.log-row .conf{width:auto;text-align:left}.log-row .path{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.log-row .meta{font-size:11px;color:var(--muted)}.log-row .flow-score{font-size:11px;font-weight:900;color:#ff5965}.log-row .lbl{font-size:10px;font-weight:850;padding:4px 8px;border-radius:7px;text-transform:uppercase;text-align:center}.log-row .lbl.ddos{color:#ff5b66;border:1px solid #a83240;background:#2a171b}.log-row .lbl.benign{color:#9aabb8;border:1px solid #3a4b57;background:transparent}
-.analysis-panel .chat-wrap{height:230px}.chat-wrap{display:flex;flex-direction:column}.chat-log{flex:1;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px}.chat-row{display:flex}.chat-row.user{justify-content:flex-end}.chat-row .bubble{max-width:88%;font-size:12px;line-height:1.55;padding:11px 14px;border-radius:9px;background:#13202b;border:1px solid #263b49;color:#dce7ee}.chat-row.user .bubble{background:#173b51;border-color:#245d7d}.chat-row .bubble .verdict{display:inline-block;font-size:10px;font-weight:900;padding:4px 8px;border-radius:6px;margin-bottom:6px;text-transform:uppercase}.chat-row .bubble .verdict.ddos{color:#ff6670;background:#30171c}.chat-row .bubble .verdict.benign{color:#a9b8c3;border:1px solid #3b4c58}.chat-row .bubble ul{list-style:none;display:flex;flex-direction:column;gap:4px;margin-top:5px}.chat-row .bubble li{padding-left:12px;color:#aebdc8;position:relative}.chat-row .bubble li::before{content:"•";position:absolute;left:0;color:#ff5965}
-.chat-input-row{display:flex;gap:10px;padding:13px 16px;border-top:1px solid var(--line)}.chat-input{flex:1;background:#0a141c;border:1px solid #293d4b;border-radius:9px;padding:11px 14px;color:var(--text);outline:none}.chat-send{background:#2e91e9;color:#fff;border:0;border-radius:9px;padding:0 20px;font-weight:900;cursor:pointer}.chat-send:disabled{opacity:.45}
-.gemini-status{font-size:10px;font-weight:850;letter-spacing:.6px;text-transform:uppercase;color:#51dc86}.gemini-status.ready{color:#51dc86}
-.empty{padding:42px 20px;text-align:center;color:var(--muted);font-size:12px}
+button,input,select{font:inherit}
+svg{display:block}
+.icon{width:18px;height:18px;flex-shrink:0}
+.caps{text-transform:uppercase}
+
+/* Display / eyebrow typographic scale, per Spasex tokens (Inter substitute for D-DIN) */
+h1,h2{text-transform:uppercase;font-weight:700;letter-spacing:.96px}
+.micro{font-size:12px;font-weight:400;text-transform:uppercase;letter-spacing:.96px;line-height:2}
+.button-cap{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1.17px;line-height:.94}
+
+/* ---------- App shell ---------- */
+header{
+  flex:0 0 auto;min-height:var(--header-h);
+  background:var(--canvas-night);border-bottom:1px solid var(--hairline-on-dark);
+  display:flex;align-items:center;gap:20px;padding:18px 32px;
+  position:sticky;top:env(safe-area-inset-top,0px);z-index:20;flex-wrap:wrap;
+}
+.brand{display:flex;align-items:center;gap:14px;min-width:0;flex-shrink:0}
+.brand svg{width:30px;height:30px;color:var(--on-primary);flex-shrink:0}
+.brand-text h1{font-size:19px;letter-spacing:1.2px;white-space:nowrap}
+.brand-text p{font-size:11px;color:var(--on-primary-mute);text-transform:uppercase;letter-spacing:.96px;margin-top:4px;white-space:nowrap}
+.model-badge{margin-left:auto;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--on-primary);color:var(--on-primary);border-radius:32px;padding:10px 20px;white-space:nowrap;background:transparent;flex-shrink:0}
+.live-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0}
+.live-select{height:38px;background:transparent;color:var(--text);border:1px solid var(--hairline-on-dark);border-radius:32px;padding:0 16px;min-width:120px;max-width:170px;outline:none;text-transform:uppercase;font-size:12px;letter-spacing:.6px}
+.live-btn{height:38px;display:inline-flex;align-items:center;gap:6px;border-radius:32px;padding:0 20px;border:1px solid var(--on-primary);background:transparent;color:var(--on-primary);cursor:pointer;white-space:nowrap}
+.live-btn.secondary{color:var(--dim);border-color:var(--hairline-on-dark)}
+.live-btn:disabled{opacity:.35;cursor:not-allowed}
+.live-status{display:none!important}
+.theme-toggle{height:38px;display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--hairline-on-dark);border-radius:32px;padding:0 18px;color:var(--text);cursor:pointer;white-space:nowrap;flex-shrink:0}
+
+.shell{flex:1 1 auto;min-height:0;max-width:1600px;width:100%;margin:0 auto;padding:20px 32px 24px;display:flex;flex-direction:column;gap:16px}
+
+/* ---------- Stats ---------- */
+.stats{flex:0 0 auto;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.stat{position:relative;min-height:100px;background:var(--canvas-night-soft);border:1px solid var(--hairline-on-dark);border-radius:8px;padding:18px 18px 16px 92px}
+.stat-icon-wrap{position:absolute;left:16px;top:18px;width:52px;height:52px;border-radius:8px;border:1px solid var(--hairline-on-dark);display:flex;align-items:center;justify-content:center;color:var(--on-primary)}
+.stat-icon-wrap svg{width:24px;height:24px}
+.stat.flag .stat-icon-wrap,.stat.flag .value{color:var(--sev-high)}
+.stat .label{font-size:11px;color:var(--on-primary-mute);text-transform:uppercase;letter-spacing:.96px}
+.stat .value{font-size:22px;line-height:1.25;font-weight:700;letter-spacing:.4px;margin-top:8px;word-break:break-word}
+.stat.model .value{font-size:15px;line-height:1.35;text-transform:uppercase;letter-spacing:.6px}
+.stat .sub{font-size:11px;color:var(--dim);margin-top:6px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+.response-panel{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;background:var(--canvas-night-soft);border:1px solid var(--sev-high);border-radius:8px;padding:14px 18px}
+.response-panel[hidden]{display:none!important}
+.response-title{font-size:12px;color:var(--sev-high);letter-spacing:1px;text-transform:uppercase;font-weight:700;display:flex;align-items:center;gap:8px}
+.response-detail{font-size:12px;margin-top:5px;color:var(--on-primary-mute)}.response-meta{font-size:10px;color:var(--dim);margin-top:3px;text-transform:uppercase;letter-spacing:.6px}.response-panel>div:last-child{display:flex;gap:10px;flex-shrink:0}
+
+.threat-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999}
+.threat-modal-backdrop[hidden]{display:none!important}
+.threat-modal{width:min(560px,100%);max-height:90vh;overflow-y:auto;background:var(--canvas-night-soft);border:1px solid var(--sev-high);border-radius:8px;padding:30px;color:var(--on-primary)}
+.threat-modal .kicker{font-size:11px;letter-spacing:1.2px;color:var(--sev-high);text-transform:uppercase;font-weight:700;display:flex;align-items:center;gap:8px}
+.threat-modal h3{font-size:26px;letter-spacing:1px;margin:10px 0}.threat-modal .score{font-size:44px;font-weight:800;letter-spacing:.5px;color:var(--sev-high)}
+.threat-modal .meta{font-size:14px;color:var(--on-primary-mute);line-height:1.8;margin-top:10px}.threat-modal .meta strong{color:var(--ink);color:var(--on-primary);font-weight:700}
+.threat-modal .actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px;margin-top:26px}
+.threat-modal button{border-radius:32px;padding:14px 24px;cursor:pointer;border:1px solid var(--on-primary);background:transparent;color:var(--on-primary)}
+.threat-modal .block{border-color:var(--sev-high);color:var(--sev-high)}
+
+/* ---------- Two sections: Logs (left) + Details & follow-up (right) ---------- */
+.main{flex:1 1 auto;min-height:300px;display:grid;grid-template-columns:1fr 32px 1.6fr;gap:10px;align-items:stretch}
+.flow-arrow{display:flex;align-items:center;justify-content:center}
+.flow-arrow-chip{width:30px;height:30px;border-radius:9999px;border:1px solid var(--hairline-on-dark);display:flex;align-items:center;justify-content:center;color:var(--on-primary);background:var(--canvas-night-soft)}
+.flow-arrow-chip svg{width:14px;height:14px}
+
+.panel{background:var(--canvas-night-soft);border:1px solid var(--hairline-on-dark);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+.panel-head{flex:0 0 auto;min-height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--hairline-on-dark);gap:10px}
+.panel-head h2{font-size:15px;letter-spacing:1px;white-space:nowrap}
+.panel-head .count{font-size:10px;color:var(--on-primary);border:1px solid var(--on-primary);border-radius:32px;padding:6px 14px;text-transform:uppercase;letter-spacing:.8px;white-space:nowrap;flex-shrink:0;max-width:52%;overflow:hidden;text-overflow:ellipsis}
+
+.list-caption{flex:0 0 auto;display:flex;justify-content:space-between;gap:10px;padding:9px 18px;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.96px;border-bottom:1px solid var(--hairline-on-dark)}
+.source-list{flex:1 1 auto;min-height:0;overflow-y:auto}
+.source-row{display:flex;align-items:center;gap:13px;padding:15px 18px;border-bottom:1px solid var(--hairline-on-dark);cursor:pointer;position:relative}
+.source-row:hover{background:rgba(255,255,255,.04)}.source-row.active{background:rgba(255,255,255,.06);box-shadow:inset 3px 0 0 var(--on-primary)}
+.source-row .sev{width:6px;height:48px;border-radius:6px;flex-shrink:0}
+.source-row .who{flex:1;min-width:0}.source-row .primary{font-size:16px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.source-row .secondary{font-size:11px;color:var(--dim);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase;letter-spacing:.4px}
+.source-row .score-value{display:inline-block;font-size:12px;font-weight:700;background:transparent;border:1px solid var(--on-primary);color:var(--on-primary);border-radius:32px;padding:7px 12px;flex-shrink:0}
+.source-row.severity-high .score-value{border-color:var(--sev-high);color:var(--sev-high)}
+
+.detail-panel{display:flex;flex-direction:column;min-height:0}
+.source-detail{flex:0 0 auto;padding:18px;background:var(--canvas-night);border-bottom:1px solid var(--hairline-on-dark)}
+.source-detail[hidden]{display:none!important}
+.detail-title{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:flex-start}.detail-title .ip{font-size:20px;font-weight:700;letter-spacing:.6px;word-break:break-word}.detail-title .secondary{font-size:11px;color:var(--dim);margin-top:6px;text-transform:uppercase;letter-spacing:.4px}
+.detail-verdict{display:inline-block;margin-left:8px;background:transparent;border:1px solid var(--sev-high);color:var(--sev-high);border-radius:32px;padding:5px 12px;font-size:12px;font-weight:700;vertical-align:middle}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:16px}.detail-metric{padding:0 4px}.detail-metric .k{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.96px}.detail-metric .v{font-size:13px;margin-top:5px;word-break:break-word;font-weight:500}
+.detail-reasons{margin-top:16px;background:var(--canvas-night-soft);border:1px solid var(--hairline-on-dark);border-radius:8px;padding:14px 16px;font-size:12px;color:var(--on-primary-mute);line-height:1.75}
+.detail-reasons strong{display:flex;align-items:center;gap:6px;color:var(--sev-high);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:6px;font-size:11px}
+
+.flows-mini{flex:0 0 auto;max-height:150px;overflow-y:auto;border-bottom:1px solid var(--hairline-on-dark)}
+.flows-mini-head{position:sticky;top:0;display:grid;grid-template-columns:64px 1fr 52px 60px;gap:6px;padding:8px 18px;color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.96px;background:var(--canvas-night-soft);border-bottom:1px solid var(--hairline-on-dark)}
+.flows-mini-row{display:grid;grid-template-columns:64px 1fr 52px 60px;gap:6px;align-items:center;padding:8px 18px;font-size:11px;border-bottom:1px solid var(--hairline-on-dark)}
+.flows-mini-row .path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.flows-mini-row .lbl{font-size:9px;font-weight:700;padding:3px 8px;border-radius:32px;text-transform:uppercase;text-align:center;letter-spacing:.4px}
+.flows-mini-row .lbl.ddos{color:var(--sev-high);border:1px solid var(--sev-high)}.flows-mini-row .lbl.benign{color:var(--dim);border:1px solid var(--hairline-on-dark)}
+
+.chat-wrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.chat-log{flex:1 1 auto;min-height:0;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.chat-row{display:flex}.chat-row.user{justify-content:flex-end}
+.chat-row .bubble{max-width:92%;font-size:13px;line-height:1.6;padding:12px 15px;border-radius:8px;background:var(--canvas-night);border:1px solid var(--hairline-on-dark);color:var(--on-primary-mute)}
+.chat-row.user .bubble{background:transparent;border-color:var(--on-primary);color:var(--on-primary)}
+.chat-row .bubble .verdict{display:inline-block;font-size:10px;font-weight:700;padding:4px 10px;border-radius:32px;margin-bottom:7px;text-transform:uppercase;letter-spacing:.6px}
+.chat-row .bubble .verdict.ddos{color:var(--sev-high);border:1px solid var(--sev-high)}.chat-row .bubble .verdict.benign{color:var(--dim);border:1px solid var(--hairline-on-dark)}
+.chat-row .bubble ul{list-style:none;display:flex;flex-direction:column;gap:4px;margin-top:6px}.chat-row .bubble li{padding-left:12px;position:relative}.chat-row .bubble li::before{content:"–";position:absolute;left:0;color:var(--dim)}
+.chat-input-row{flex:0 0 auto;display:flex;align-items:center;gap:6px;margin:14px 16px 16px;padding:5px 6px 5px 18px;border:1px solid var(--on-primary);border-radius:32px;background:transparent}
+.chat-input{flex:1;background:transparent;border:0;padding:9px 0;color:var(--text);outline:none;min-width:0;font-size:13px}
+.chat-input::placeholder{color:var(--dim);text-transform:uppercase;font-size:11px;letter-spacing:.6px}
+.chat-send{background:transparent;color:var(--on-primary);border:1px solid var(--on-primary);border-radius:32px;width:34px;height:34px;flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.chat-send svg{width:15px;height:15px;margin-left:1px}
+.chat-send:disabled{opacity:.35}
+.gemini-status{font-size:10px;letter-spacing:.96px;text-transform:uppercase;color:var(--dim);white-space:nowrap;display:flex;align-items:center;gap:6px}
+.gemini-status.ready{color:var(--on-primary)}
+.gemini-status .dot{width:6px;height:6px;border-radius:9999px;background:currentColor;flex-shrink:0}
+
+.typing-dots{display:flex;gap:4px;padding:2px 0}.typing-dots span{width:5px;height:5px;border-radius:9999px;background:var(--dim);animation:blink 1.2s infinite ease-in-out}.typing-dots span:nth-child(2){animation-delay:.2s}.typing-dots span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.typing-dots span{animation:none}}
+
+.empty{padding:36px 20px;text-align:center;color:var(--dim);font-size:13px}
 .sensor-control[hidden]{display:none!important}
-::-webkit-scrollbar{width:7px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#29404f;border-radius:7px}
-@media(max-width:1100px){header{padding:0 20px}.brand{min-width:250px}.main{grid-template-columns:1fr}.model-badge{margin-left:auto}.log-row,.log-table-head{grid-template-columns:70px 1.4fr 65px 70px 65px 75px 75px}}
-@media(max-width:760px){header{height:auto;min-height:86px;flex-wrap:wrap;padding:15px 16px;gap:12px}.brand{min-width:0}.brand-text h1{font-size:20px}.brand-text p{font-size:9px}.model-badge{order:3;width:100%;text-align:center}.live-controls{margin-left:auto}.stats{grid-template-columns:1fr}.shell{padding:18px 12px}.detail-grid{grid-template-columns:repeat(2,1fr)}.log-table-head{display:none}.log-row{display:flex;flex-wrap:wrap;gap:7px}.log-row>*{min-width:70px}}
+::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--hairline-on-dark);border-radius:7px}
+:focus-visible{outline:2px solid var(--on-primary);outline-offset:2px}
+
+@media(max-width:1200px){ .stats{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media(max-width:1100px){
+  body{overflow-y:auto}
+  .shell{padding:16px 20px 20px}
+  .main{grid-template-columns:1fr;gap:14px;min-height:0}
+  .flow-arrow{display:none}
+  .panel{height:48vh;min-height:300px}
+}
+@media(max-width:760px){
+  header{padding:14px 16px;gap:10px}
+  .brand-text h1{font-size:17px}
+  .model-badge{order:3;width:100%;justify-content:center}
+  .live-controls{margin-left:auto;justify-content:flex-end}
+  .stats{grid-template-columns:1fr 1fr;gap:8px}
+  .stat{min-height:88px;padding:15px 14px 12px 80px}
+  .stat-icon-wrap{width:44px;height:44px}
+  .shell{padding:14px 12px 16px;gap:10px}
+  .panel{height:50vh;min-height:280px}
+  .flows-mini-head,.flows-mini-row{grid-template-columns:56px 1fr 48px 52px}
+}
+@media(max-width:420px){
+  .stats{grid-template-columns:1fr}
+  .live-select{min-width:0;flex:1}
+  .theme-toggle span.label,.live-btn span.label{display:none}
+}
 </style>
 </head>
 <body>
 
 <header>
   <div class="brand">
-    <svg viewBox="0 0 48 48" fill="none"><path d="M24 3L6 11V23C6 34 14 43 24 46C34 43 42 34 42 23V11L24 3Z" stroke="currentColor" stroke-width="2.4"/><path d="M16 24L21 29L33 17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div class="brand-text"><h1>SHAKALAKA</h1><p>Passive unidirectional threat detection</p></div>
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 3L6 11V23C6 34 14 43 24 46C34 43 42 34 42 23V11L24 3Z" stroke="currentColor" stroke-width="1.6"/><path d="M16 24L21 29L33 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div class="brand-text"><h1>Sentry</h1><p>Passive unidirectional threat detection</p></div>
   </div>
-  <span class="model-badge" id="modelBadge">UNIDIRECTIONAL ML · 7 MODELS</span>
+  <span class="model-badge button-cap" id="modelBadge">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 17V13M9 17V9M14 17V6M19 17V11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    Unidirectional ML · 7 models
+  </span>
   <div class="live-controls">
     <select id="interfaceSelect" class="live-select sensor-control"><option value="">Interface…</option></select>
-    <button id="liveStart" class="live-btn sensor-control">▶ START LIVE</button>
-    <button id="liveStop" class="live-btn secondary sensor-control" disabled>◉ STOP</button>
-    <button id="themeToggle" class="theme-toggle" type="button">☀ LIGHT</button>
+    <button id="liveStart" class="live-btn button-cap sensor-control">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 4L20 12L6 20V4Z" fill="currentColor"/></svg>
+      <span class="label">Start live</span>
+    </button>
+    <button id="liveStop" class="live-btn secondary button-cap sensor-control" disabled>
+      <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></svg>
+      <span class="label">Stop</span>
+    </button>
+    <button id="themeToggle" class="theme-toggle button-cap" type="button">
+      <svg class="icon" id="themeIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" fill="currentColor"/></svg>
+      <span class="label" id="themeLabel">Light</span>
+    </button>
     <span id="liveStatus" class="live-status sensor-control">API OFFLINE</span>
   </div>
 </header>
 <div class="shell">
   <div class="stats" id="statStrip"></div>
   <section class="response-panel" id="responsePanel" hidden>
-    <div><div class="response-title" id="responseTitle">Threat response available</div><div class="response-detail" id="responseDetail"></div><div class="response-meta" id="responseMeta"></div></div>
-    <div><button class="live-btn" id="responseBlock">BLOCK IP</button><button class="live-btn secondary" id="responseIgnore">IGNORE</button></div>
+    <div>
+      <div class="response-title">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9L2.5 18a1.6 1.6 0 001.4 2.4h16.2a1.6 1.6 0 001.4-2.4L13.7 3.9a1.6 1.6 0 00-2.8 0z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        Threat response available
+      </div>
+      <div class="response-detail" id="responseDetail"></div><div class="response-meta" id="responseMeta"></div>
+    </div>
+    <div><button class="live-btn button-cap" id="responseBlock">Block IP</button><button class="live-btn secondary button-cap" id="responseIgnore">Ignore</button></div>
   </section>
   <div class="threat-modal-backdrop" id="threatModal" hidden>
     <div class="threat-modal" role="dialog" aria-modal="true" aria-labelledby="threatModalTitle">
-      <div class="kicker">Threat response request</div><h3 id="threatModalTitle">High threat detected</h3>
+      <div class="kicker">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9L2.5 18a1.6 1.6 0 001.4 2.4h16.2a1.6 1.6 0 001.4-2.4L13.7 3.9a1.6 1.6 0 00-2.8 0z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        Threat response request
+      </div>
+      <h3 id="threatModalTitle">High threat detected</h3>
       <div class="score" id="threatModalScore">93%</div>
       <div class="meta" id="threatModalMeta">Source <strong>—</strong><br>Predicted threat <strong>—</strong><br>Model <strong>—</strong></div>
-      <div class="actions"><button class="ignore" id="threatModalIgnore" type="button">IGNORE</button><button class="block" id="threatModalBlock" type="button">BLOCK IP</button></div>
+      <div class="actions"><button class="button-cap" id="threatModalIgnore" type="button">Ignore</button><button class="block button-cap" id="threatModalBlock" type="button">Block IP</button></div>
     </div>
   </div>
+
   <div class="main">
-    <section class="panel flagged-panel">
-      <div class="panel-head"><h2>Flagged Sources</h2><span class="count" id="sourceCount">0 SOURCES</span></div>
+    <section class="panel">
+      <div class="panel-head"><h2>Logs</h2><span class="count" id="sourceCount">0 sources</span></div>
+      <div class="list-caption"><span>URL / name (IP)</span><span>Threat score</span></div>
       <div class="source-list" id="sourceList"></div>
     </section>
-    <section class="panel traffic-panel">
-      <div class="panel-head"><h2>Source Details</h2><span class="count" id="logHeaderId">ALL FLOWS</span></div>
+
+    <div class="flow-arrow" aria-hidden="true"><span class="flow-arrow-chip"><svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+
+    <section class="panel detail-panel">
+      <div class="panel-head"><h2>Details &amp; follow-up</h2><span class="count" id="logHeaderId">Select a log</span></div>
       <div class="source-detail" id="sourceDetail" hidden></div>
-      <div id="logBody"><div class="empty">No logged flows yet. Start live monitoring.</div></div>
+      <div class="flows-mini" id="flowsMini" hidden></div>
+      <div class="chat-wrap">
+        <div class="chat-log" id="chatLog"><div class="chat-row bot"><div class="bubble">Click a flagged source on the left to see its details and ask follow-up questions here.</div></div></div>
+        <form class="chat-input-row" id="chatForm">
+          <input class="chat-input" id="chatInput" type="text" placeholder="Follow up questions…" autocomplete="off" disabled>
+          <button class="chat-send" type="submit" id="chatSend" aria-label="Ask">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12L20 4L13 20L11 13L4 12Z" fill="currentColor"/></svg>
+          </button>
+        </form>
+      </div>
     </section>
   </div>
-  <section class="panel analysis-panel">
-    <div class="panel-head"><h2>✦ Gemini AI Analysis</h2><span class="gemini-status" id="geminiStatus">GEMINI · CHECKING</span></div>
-    <div class="chat-wrap">
-      <div class="chat-log" id="chatLog"><div class="chat-row bot"><div class="bubble">Select a flagged source to load its analysis.</div></div></div>
-      <form class="chat-input-row" id="chatForm"><input class="chat-input" id="chatInput" type="text" placeholder="Ask Gemini about this source…" autocomplete="off" disabled><button class="chat-send" type="submit" id="chatSend">➤ ASK</button></form>
-    </div>
-  </section>
 </div>
-
 <script>
 /* ============================================================
    BACKEND CONTRACT — see dashboard.py
@@ -181,7 +275,6 @@ body.light-mode .log-row{border-color:var(--line)}
                                               flagged, flagged_sources, avg_confidence, model }
    GET  /api/groups                    -> [{ group_id, src_ip, host, request_count,
                                               label, confidence, last_seen }]
-   GET  /api/logs                      -> all currently loaded flows
    GET  /api/groups/<id>/logs          -> [{ id, timestamp, src_ip, dst_ip, dst_port,
                                               protocol, confidence, label,
                                               packets_per_sec, why[], features[] }]
@@ -189,19 +282,25 @@ body.light-mode .log-row{border-color:var(--line)}
    GET  /api/groups/<id>/chat/history  -> [{ sender: "user"|"bot", lead, bullets? }, ...]
    POST /api/groups/<id>/chat          body: { message }
                                         -> { lead, bullets? }
-
-   Data now comes from the real Zeek + rule-based detection pipeline.
    ============================================================ */
 
 const LIVE_API = {{ live_api|tojson }};
 let liveSocket = null;
 let liveThreats = 0;
-let liveModelLabel = 'OFFLINE';
 let latestThreatScore = 0;
 let latestMlPrediction = null;
 let lastPromptedScore = null;
+let loadedModelsCount = 0;
 const ignoredIps = new Set();
 const RESPONSE_THRESHOLD = 92;
+
+const ICONS = {
+  pulse: '<svg viewBox="0 0 24 24" fill="none"><path d="M3 12h4l2 7 4-14 2 7h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  flag: '<svg viewBox="0 0 24 24" fill="none"><path d="M6 3v18M6 4h11l-2.5 4L17 12H6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  percent: '<svg viewBox="0 0 24 24" fill="none"><circle cx="7" cy="7" r="2.6" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="17" r="2.6" stroke="currentColor" stroke-width="1.6"/><path d="M18 6L6 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  target: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="0.9" fill="currentColor"/></svg>',
+  cpu: '<svg viewBox="0 0 24 24" fill="none"><rect x="7" y="7" width="10" height="10" rx="1.2" stroke="currentColor" stroke-width="1.6"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
+};
 
 async function loadLiveStatus(){
   try{
@@ -210,45 +309,32 @@ async function loadLiveStatus(){
     const s=await res.json();
     const running=!!s.running;
 
-    // The dashboard remains open independently of the sensor. The status
-    // reflects the actual FastAPI live-monitor state, not whether the page
-    // itself is reachable.
     document.getElementById('liveStatus').textContent=running?'LIVE':'OFFLINE';
     document.querySelectorAll('.sensor-control').forEach(el=>el.hidden=false);
     document.getElementById('liveStart').disabled=running;
-    // Start/Stop only control the FastAPI live sensor. They are disabled
-    // whenever that API is unavailable; the Flask dashboard itself remains usable.
     document.getElementById('liveStop').disabled=!running;
     document.getElementById('interfaceSelect').disabled=false;
 
     if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
     const loaded=(s.models&&s.models.loaded_models)||[];
+    loadedModelsCount=loaded.length;
     const latest=(s.latest_ml)||{};
     latestThreatScore=Number(latest.score||0);
     latestMlPrediction=latest.prediction||null;
     if(latest.source_ip && latestMlPrediction) latestMlPrediction.src_ip=latest.source_ip;
     updateResponsePanel();
-    liveModelLabel = loaded.length
-      ? 'UNIDIRECTIONAL ML · '+loaded.length+' MODEL'+(loaded.length===1?'':'S')
-      : 'RULES ONLY · UNI ML READY';
-    document.getElementById('modelBadge').textContent = liveModelLabel;
+    const modelBadge=document.getElementById('modelBadge');
+    modelBadge.innerHTML = ICONS.pulse.replace('<svg ', '<svg class="icon" ') + (loaded.length
+      ? 'Unidirectional ML · '+loaded.length+' model'+(loaded.length===1?'':'s')
+      : 'Rules only · uni ML ready');
 
     if(running) connectLiveSocket();
-    else if(liveSocket){
-      try{ liveSocket.close(); }catch(e){}
-      liveSocket=null;
-    }
+    else if(liveSocket){ try{ liveSocket.close(); }catch(e){} liveSocket=null; }
     return s;
   }catch(e){
-    // Flask dashboard can remain open even if FastAPI/app.py has stopped.
     document.getElementById('liveStatus').textContent='API OFFLINE';
-    // Keep the dashboard usable, but remove sensor controls when the live API
-    // itself cannot be reached. They return automatically when the API recovers.
     document.querySelectorAll('.sensor-control').forEach(el=>el.hidden=true);
-    if(liveSocket){
-      try{ liveSocket.close(); }catch(err){}
-      liveSocket=null;
-    }
+    if(liveSocket){ try{ liveSocket.close(); }catch(err){} liveSocket=null; }
     return null;
   }
 }
@@ -256,8 +342,6 @@ async function loadLiveStatus(){
 let liveStatusPollTimer = null;
 function startLiveStatusPolling(){
   if(liveStatusPollTimer) clearInterval(liveStatusPollTimer);
-  // Keep ONLINE/OFFLINE/API OFFLINE synchronized even when the user does
-  // not interact with the Start/Stop buttons.
   liveStatusPollTimer = setInterval(loadLiveStatus, 2000);
 }
 
@@ -277,10 +361,7 @@ async function loadInterfaces(){
       select.appendChild(o);
     });
     if(current && details.some(i=>i.name===current && i.usable)) select.value=current;
-    else {
-      const ready=details.find(i=>i.usable);
-      if(ready) select.value=ready.name;
-    }
+    else { const ready=details.find(i=>i.usable); if(ready) select.value=ready.name; }
   }catch(e){}
 }
 
@@ -295,14 +376,10 @@ function connectLiveSocket(){
           if(data.prediction) latestMlPrediction=data.prediction;
           else if(data.source_ip && latestMlPrediction) latestMlPrediction.src_ip=data.source_ip;
           handleThreatScoreUpdate(data.score);
-          if(data.response_available && latestThreatScore!==lastPromptedScore){
-            lastPromptedScore=latestThreatScore;
-          }
+          if(data.response_available && latestThreatScore!==lastPromptedScore){ lastPromptedScore=latestThreatScore; }
           loadStats();
         }
-        if(data.type==='ml_prediction' && String(data.label||'').toLowerCase()!=='benign'){
-          latestMlPrediction=data;
-        }
+        if(data.type==='ml_prediction' && String(data.label||'').toLowerCase()!=='benign'){ latestMlPrediction=data; }
         liveThreats++;
         const badge=document.getElementById('sourceCount');
         badge.textContent=badge.textContent.split(' ·')[0]+' · '+liveThreats+' live';
@@ -320,13 +397,11 @@ function connectLiveSocket(){
 }
 
 async function loadGeminiStatus(){
-  const badge=document.getElementById('geminiStatus');
   try{
     const res=await fetch('/api/gemini/status',{cache:'no-store'});
     const data=await res.json();
-    if(data.configured){ badge.textContent='GEMINI · READY · '+data.model; badge.classList.add('ready'); }
-    else { badge.textContent='GEMINI · API KEY MISSING'; badge.classList.remove('ready'); }
-  }catch(e){ badge.textContent='GEMINI · BACKEND ERROR'; badge.classList.remove('ready'); }
+    window.__geminiReady = !!data.configured;
+  }catch(e){ window.__geminiReady = false; }
 }
 
 async function startLive(){
@@ -355,7 +430,6 @@ function updateResponsePanel(){
   if(!eligible) return;
   const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
   const model=latestMlPrediction&&latestMlPrediction.model?latestMlPrediction.model:'UNIDIRECTIONAL ML';
-  document.getElementById('responseTitle').textContent='THREAT RESPONSE AVAILABLE';
   document.getElementById('responseDetail').textContent=label+' detected from '+ip+' · score '+latestThreatScore.toFixed(0)+'%';
   document.getElementById('responseMeta').textContent=model+' · '+RESPONSE_THRESHOLD+'% threshold · manual confirmation · no automatic blocking';
 }
@@ -369,31 +443,20 @@ function showThreatModal(){
   document.getElementById('threatModalMeta').innerHTML='Source <strong>'+ip+'</strong><br>Predicted threat <strong>'+label+'</strong><br>Model <strong>'+model+'</strong><br>Manual confirmation required before blocking.';
   modal.hidden=false;
 }
-function hideThreatModal(){
-  const modal=document.getElementById('threatModal');
-  if(modal) modal.hidden=true;
-}
+function hideThreatModal(){ const modal=document.getElementById('threatModal'); if(modal) modal.hidden=true; }
 function handleThreatScoreUpdate(score){
   const old=latestThreatScore;
   latestThreatScore=Number(score||0);
   updateResponsePanel();
-  if(
-    latestThreatScore >= RESPONSE_THRESHOLD &&
-    old <= RESPONSE_THRESHOLD &&
-    currentThreatIp() &&
-    !ignoredIps.has(currentThreatIp())
-  ){
-    showThreatModal();
-  }
+  if(latestThreatScore >= RESPONSE_THRESHOLD && old <= RESPONSE_THRESHOLD && currentThreatIp() && !ignoredIps.has(currentThreatIp())){ showThreatModal(); }
 }
 async function blockCurrentThreat(){
   const ip=currentThreatIp(); if(!ip || latestThreatScore<RESPONSE_THRESHOLD) return;
-  const ok=window.confirm('Block source IP '+ip+' on this host?\\n\\nThreat score: '+latestThreatScore.toFixed(0)+'%\\nAction requires your confirmation.');
+  const ok=window.confirm('Block source IP '+ip+' on this host?\n\nThreat score: '+latestThreatScore.toFixed(0)+'%\nAction requires your confirmation.');
   if(!ok) return;
   try{
     const res=await fetch(LIVE_API+'/api/live/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'block',ip})});
     const data=await res.json(); if(!res.ok) throw new Error(data.detail||'Firewall action failed');
-    document.getElementById('responseTitle').textContent='SOURCE IP BLOCKED';
     document.getElementById('responseDetail').textContent=ip+' was blocked on this host.';
     document.getElementById('responseMeta').textContent='Manual response completed.';
     document.getElementById('responseBlock').disabled=true;
@@ -413,12 +476,8 @@ async function stopLive(){
     if(!res.ok) throw new Error(data.detail||'Unable to stop live monitoring');
     await loadLiveStatus();
     loadStats(); loadGroups();
-  }catch(e){
-    button.disabled=false;
-    alert(e.message);
-  }finally{
-    if(document.getElementById('liveStatus').textContent==='OFFLINE') button.disabled=false;
-  }
+  }catch(e){ button.disabled=false; alert(e.message); }
+  finally{ if(document.getElementById('liveStatus').textContent==='OFFLINE') button.disabled=false; }
 }
 
 document.getElementById('liveStart').addEventListener('click',startLive);
@@ -426,29 +485,16 @@ document.getElementById('liveStop').addEventListener('click',stopLive);
 document.getElementById('liveStop').disabled=true;
 document.getElementById('responseBlock').addEventListener('click',blockCurrentThreat);
 document.getElementById('responseIgnore').addEventListener('click',ignoreCurrentThreat);
-document.getElementById('threatModalBlock').addEventListener('click',async()=>{
-  await blockCurrentThreat();
-  if(document.getElementById('responseBlock').disabled) hideThreatModal();
-});
+document.getElementById('threatModalBlock').addEventListener('click',async()=>{ await blockCurrentThreat(); if(document.getElementById('responseBlock').disabled) hideThreatModal(); });
 document.getElementById('threatModalIgnore').addEventListener('click',()=>{ ignoreCurrentThreat(); hideThreatModal(); });
-document.getElementById('threatModal').addEventListener('click',(event)=>{
-  if(event.target.id==='threatModal') hideThreatModal();
-});
-document.addEventListener('keydown',(event)=>{
-  if(event.key==='Escape') hideThreatModal();
-});
+document.getElementById('threatModal').addEventListener('click',(event)=>{ if(event.target.id==='threatModal') hideThreatModal(); });
+document.addEventListener('keydown',(event)=>{ if(event.key==='Escape') hideThreatModal(); });
 
 let selectedGroup = null;
 let groups = [];
 
-/* --- helpers for null-safe rendering --- */
-function fmtConf(c){
-  if(c == null) return '—';
-  return (c*100).toFixed(0)+'%';
-}
+function fmtConf(c){ if(c == null) return '—'; return (c*100).toFixed(0)+'%'; }
 function fmtPort(p){ return p != null ? p : '—'; }
-function fmtProto(p){ return p || '—'; }
-function fmtPps(p){ return p != null ? p.toLocaleString() : '0'; }
 
 async function loadStats(){
   try{
@@ -457,13 +503,15 @@ async function loadStats(){
     const total=s.flows_analyzed||0;
     const flagPct=total>0?((s.flagged/total)*100).toFixed(1):'0.0';
     const strip=[
-      {icon:'◈',label:'Flows analyzed',value:total.toLocaleString(),sub:s.flows_analyzed_window||'LIVE FLOW COUNT',cls:''},
-      {icon:'⚑',label:'Flagged sources',value:s.flagged||0,sub:(s.flagged_sources||0)+' sources · '+flagPct+'% of flows',cls:'flag'},
-      {icon:'◎',label:'Threat score',value:latestThreatScore.toFixed(0)+'%',sub:latestMlPrediction?'strongest malicious model confidence':'waiting for ML inference',cls:latestThreatScore>=RESPONSE_THRESHOLD?'flag':''}
+      {icon:ICONS.pulse,label:'Flows analyzed',value:total.toLocaleString(),sub:s.flows_analyzed_window||'Live flow count',cls:''},
+      {icon:ICONS.flag,label:'Flagged sources',value:s.flagged||0,sub:(s.flagged_sources||0)+' sources · '+flagPct+'% of flows',cls:'flag'},
+      {icon:ICONS.percent,label:'Avg confidence',value:fmtConf(s.avg_confidence),sub:'On flagged flows',cls:''},
+      {icon:ICONS.target,label:'Live threat score',value:latestThreatScore.toFixed(0)+'%',sub:latestMlPrediction?(latestMlPrediction.label||'THREAT')+' · strongest model confidence':'Waiting for ML inference',cls:latestThreatScore>=RESPONSE_THRESHOLD?'flag':''},
+      {icon:ICONS.cpu,label:'Active model',value:loadedModelsCount?('Unidirectional ML · '+loadedModelsCount+' model'+(loadedModelsCount===1?'':'s')):'Rules only',sub:'Live detection pipeline',cls:'model'}
     ];
     document.getElementById('statStrip').innerHTML=strip.map(item=>`
       <div class="stat ${item.cls}">
-        <div class="stat-icon">${item.icon}</div>
+        <div class="stat-icon-wrap">${item.icon}</div>
         <div class="label">${item.label}</div>
         <div class="value">${item.value}</div>
         <div class="sub">${item.sub}</div>
@@ -475,21 +523,14 @@ async function loadGroups(){
   try{
     const res = await fetch('/api/groups');
     const data = await res.json();
-    // Backend may return { error: "..." } on 503 instead of an array
-    if(Array.isArray(data)){
-      groups = data;
-    } else {
-      groups = [];
-    }
+    groups = Array.isArray(data) ? data : [];
     renderGroups();
-  }catch(e){
-    console.error('[Dashboard] Failed to load groups:', e);
-  }
+  }catch(e){ console.error('[Dashboard] Failed to load groups:', e); }
 }
 
 function renderGroups(){
   const flaggedGroups = groups.filter(g => Number(g.threat_score||0) > 0);
-  document.getElementById('sourceCount').textContent = flaggedGroups.length + ' SOURCES';
+  document.getElementById('sourceCount').textContent = flaggedGroups.length + ' sources';
   const list = document.getElementById('sourceList');
   if(flaggedGroups.length === 0){
     list.innerHTML = '<div class="empty">No flagged sources yet. Sources will appear here automatically when threat evidence is detected.</div>';
@@ -497,35 +538,21 @@ function renderGroups(){
   }
   list.innerHTML = flaggedGroups.map(g => {
     const score = Number(g.threat_score||0);
+    const sevClass = score >= 90 ? 'severity-high' : '';
     return `
-    <div class="source-row ${g.group_id===selectedGroup?'active':''}" data-id="${g.group_id}">
-      <div class="sev" style="background:${score >= 90 ? 'var(--red)' : score >= 70 ? 'var(--orange)' : 'var(--yellow)'}"></div>
+    <div class="source-row ${sevClass} ${g.group_id===selectedGroup?'active':''}" data-id="${g.group_id}" tabindex="0" role="button">
+      <div class="sev" style="background:${score >= 90 ? 'var(--sev-high)' : score >= 70 ? 'var(--sev-mid)' : 'var(--sev-low)'}"></div>
       <div class="who">
         <div class="primary">${g.src_ip || g.host || 'Unknown source'}</div>
         <div class="secondary">${g.host ? g.host + ' · ' : ''}${g.label} · ${g.flagged_flows}/${g.request_count} flagged</div>
       </div>
-      <div class="count-badge">${g.request_count} flows</div>
-      <div class="conf" style="color:var(--attention)"><span class="score-label">Threat score</span><span class="score-value">${score.toFixed(0)}%</span></div>
+      <div class="conf"><span class="score-value">${score.toFixed(0)}%</span></div>
     </div>`;
   }).join('');
   list.querySelectorAll('.source-row').forEach(row => {
     row.addEventListener('click', () => selectGroup(row.dataset.id));
+    row.addEventListener('keydown', (e) => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); selectGroup(row.dataset.id); } });
   });
-  if(!selectedGroup && flaggedGroups.length){
-    selectGroup(flaggedGroups[0].group_id);
-  }
-}
-
-async function loadAllLogs(){
-  document.getElementById('logHeaderId').textContent = 'ALL FLOWS';
-  document.getElementById('logBody').innerHTML = '<div class="empty">Loading live flows…</div>';
-  try{
-    const res=await fetch('/api/logs');
-    const data=await res.json();
-    renderLogs(Array.isArray(data) ? data : [], 'No flows captured yet. Start live monitoring to populate flow analysis.');
-  }catch(e){
-    document.getElementById('logBody').innerHTML = '<div class="empty">Unable to load live flows.</div>';
-  }
 }
 
 async function selectGroup(id){
@@ -535,7 +562,8 @@ async function selectGroup(id){
 
   document.getElementById('sourceDetail').hidden = false;
   document.getElementById('sourceDetail').innerHTML = '<div class="empty" style="padding:20px">Loading source detail…</div>';
-  document.getElementById('logBody').innerHTML = '<div class="empty">Loading flows…</div>';
+  document.getElementById('flowsMini').hidden = false;
+  document.getElementById('flowsMini').innerHTML = '<div class="empty">Loading flows…</div>';
   const [logsRes, analysisRes, historyRes] = await Promise.all([
     fetch(`/api/groups/${encodeURIComponent(id)}/logs`),
     fetch(`/api/groups/${encodeURIComponent(id)}/analysis`),
@@ -546,7 +574,7 @@ async function selectGroup(id){
   const history = await historyRes.json();
 
   renderSourceDetail(id, analysis, Array.isArray(logs) ? logs : []);
-  renderLogs(Array.isArray(logs) ? logs : []);
+  renderFlowsMini(Array.isArray(logs) ? logs : []);
   resetChat(analysis, history);
 
   const input = document.getElementById('chatInput');
@@ -563,9 +591,8 @@ function renderSourceDetail(id, analysis, logs){
   const flagged=Number(analysis.flagged_flows||0);
   const total=Number(analysis.total_flows||logs.length||0);
   const reasons=(analysis.bullets||[]).slice(0,5);
-  const model=analysis.model || analysis.prediction_model || 'UNIDIRECTIONAL ML';
   detail.innerHTML=`
-    <div class="detail-title"><div><div class="ip">${id} <span class="detail-verdict">${score.toFixed(0)}%</span></div><div class="secondary">${analysis.label||'SUSPICIOUS'} · source-level analysis</div></div><div class="verdict">${analysis.label||'THREAT'}</div></div>
+    <div class="detail-title"><div><div class="ip">${id} <span class="detail-verdict">${score.toFixed(0)}%</span></div><div class="secondary">${analysis.label||'SUSPICIOUS'} · source-level analysis</div></div></div>
     <div class="detail-grid">
       <div class="detail-metric"><div class="k">Total flows</div><div class="v">${total}</div></div>
       <div class="detail-metric"><div class="k">Flagged flows</div><div class="v">${flagged}</div></div>
@@ -574,36 +601,24 @@ function renderSourceDetail(id, analysis, logs){
       <div class="detail-metric"><div class="k">First seen</div><div class="v">${analysis.first_seen||'—'}</div></div>
       <div class="detail-metric"><div class="k">Last seen</div><div class="v">${analysis.last_seen||'—'}</div></div>
     </div>
-    <div class="detail-reasons"><strong>Why flagged?</strong>${reasons.length?reasons.map(x=>'• '+x).join('<br>'):'• Suspicious traffic evidence detected.'}<br>• ML model confidence: ${fmtConf(analysis.confidence)}</div>
-    
+    <div class="detail-reasons"><strong>${ICONS.target.replace('<svg ', '<svg class="icon" ')}Why flagged?</strong>${reasons.length?reasons.map(x=>'• '+x).join('<br>'):'• Suspicious traffic evidence detected.'}<br>• ML model confidence: ${fmtConf(analysis.confidence)}</div>
   `;
-
 }
 
-function renderLogs(logs, emptyMessage='No logged flows for this source.'){
-  const body=document.getElementById('logBody');
-  if(!logs.length){ body.innerHTML=`<div class="empty">${emptyMessage}</div>`; return; }
-  body.innerHTML=`<div class="log-table-head"><span>TIME</span><span>DESTINATION</span><span>PORT</span><span>PROTOCOL</span><span>PACKETS</span><span>THREAT SCORE</span><span>VERDICT</span></div><div class="log-list">${logs.map(l=>{
-    const flagged=l.label && l.label!=='BENIGN'; const score=Number(l.threat_score||0);
-    return `<div class="log-row"><span class="time">${l.timestamp||'—'}</span><span class="path">${l.dst_ip||'—'}</span><span>${fmtPort(l.dst_port)}</span><span>${fmtProto(l.protocol)}</span><span>${l.packets!=null?l.packets:(l.total_fwd_packets!=null?l.total_fwd_packets:'—')}</span><span class="flow-score">${score.toFixed(0)}%</span><span class="lbl ${flagged?'ddos':'benign'}">${l.label||'BENIGN'}</span></div>`;
-  }).join('')}</div>`;
+function renderFlowsMini(logs){
+  const wrap=document.getElementById('flowsMini');
+  if(!logs.length){ wrap.innerHTML='<div class="empty">No logged flows for this source.</div>'; return; }
+  wrap.innerHTML=`<div class="flows-mini-head"><span>Time</span><span>Destination</span><span>Port</span><span>Verdict</span></div>${logs.slice(0,25).map(l=>{
+    const flagged=l.label && l.label!=='BENIGN';
+    return `<div class="flows-mini-row"><span>${l.timestamp||'—'}</span><span class="path">${l.dst_ip||'—'}</span><span>${fmtPort(l.dst_port)}</span><span class="lbl ${flagged?'ddos':'benign'}">${l.label||'BENIGN'}</span></div>`;
+  }).join('')}`;
 }
 
-// The Analysis bubble (rule-based verdict) is regenerated fresh every time —
-// it's deterministic, so there's nothing to replay there. The chat Q&A that
-// follows it, though, only exists in chat_display on the backend, so it's
-// fetched as `history` and replayed in order right after.
 function resetChat(analysis, history){
   const log = document.getElementById('chatLog');
   log.innerHTML = '';
-  if(analysis && !analysis.error){
-    addChatRow({ lead: analysis.lead, bullets: analysis.bullets, verdict: analysis.label }, false);
-  }
-  if(Array.isArray(history)){
-    history.forEach(turn => {
-      addChatRow({ lead: turn.lead, bullets: turn.bullets }, turn.sender === 'user');
-    });
-  }
+  if(analysis && !analysis.error){ addChatRow({ lead: analysis.lead, bullets: analysis.bullets, verdict: analysis.label }, false); }
+  if(Array.isArray(history)){ history.forEach(turn => { addChatRow({ lead: turn.lead, bullets: turn.bullets }, turn.sender === 'user'); }); }
 }
 
 function addChatRow(payload, isUser){
@@ -614,11 +629,8 @@ function addChatRow(payload, isUser){
   bubble.className = 'bubble';
   const lbl = payload.verdict || '';
   const isThreat = lbl && lbl !== 'BENIGN';
-  const verdictHtml = lbl
-    ? `<div class="verdict ${isThreat?'ddos':'benign'}">${lbl}</div><br>`
-    : '';
-  const bulletsHtml = (payload.bullets && payload.bullets.length)
-    ? `<ul>${payload.bullets.map(b => `<li>${b}</li>`).join('')}</ul>` : '';
+  const verdictHtml = lbl ? `<div class="verdict ${isThreat?'ddos':'benign'}">${lbl}</div><br>` : '';
+  const bulletsHtml = (payload.bullets && payload.bullets.length) ? `<ul>${payload.bullets.map(b => `<li>${b}</li>`).join('')}</ul>` : '';
   bubble.innerHTML = verdictHtml + `<div class="lead">${payload.lead}</div>` + bulletsHtml;
   row.appendChild(bubble);
   log.appendChild(row);
@@ -626,8 +638,6 @@ function addChatRow(payload, isUser){
   return row;
 }
 
-// Shown in place of a real reply while we're waiting on the backend —
-// the "interaction bubble": a bot-side bubble with three pulsing dots.
 function addTypingBubble(){
   const log = document.getElementById('chatLog');
   const row = document.createElement('div');
@@ -643,25 +653,14 @@ async function askQuestion(q){
   const typingRow = addTypingBubble();
   const input = document.getElementById('chatInput');
   const send = document.getElementById('chatSend');
-  input.disabled = true;
-  send.disabled = true;
+  input.disabled = true; send.disabled = true;
   try{
-    const res = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: q })
-    });
+    const res = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: q }) });
     const data = await res.json();
     typingRow.remove();
     addChatRow(data, false);
-  }catch(e){
-    typingRow.remove();
-    addChatRow({ lead: "Couldn't reach the analysis backend — try again in a moment." }, false);
-  }finally{
-    input.disabled = false;
-    send.disabled = false;
-    input.focus();
-  }
+  }catch(e){ typingRow.remove(); addChatRow({ lead: "Couldn't reach the analysis backend — try again in a moment." }, false); }
+  finally{ input.disabled = false; send.disabled = false; input.focus(); }
 }
 
 document.getElementById('chatForm').addEventListener('submit', (e) => {
@@ -674,29 +673,23 @@ document.getElementById('chatForm').addEventListener('submit', (e) => {
   input.value = '';
 });
 
-/* --- theme --- */
+const SUN_ICON='<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" fill="currentColor"/>';
+const MOON_ICON='<circle cx="12" cy="12" r="5" fill="currentColor"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>';
 function applyTheme(mode){
   const light=mode==='light';
-  document.body.classList.toggle('light-mode',light);
-  document.documentElement.style.colorScheme=light?'light':'dark';
-  const button=document.getElementById('themeToggle');
-  if(button){
-    button.textContent=light?'☾ DARK':'☀ LIGHT';
-    button.setAttribute('aria-label',light?'Switch to dark mode':'Switch to light mode');
-  }
+  document.body.classList.toggle('light-mode', light);
+  document.documentElement.style.colorScheme = light ? 'light' : 'dark';
+  document.getElementById('themeIcon').innerHTML = light ? MOON_ICON : SUN_ICON;
+  document.getElementById('themeLabel').textContent = light ? 'Dark' : 'Light';
+  document.getElementById('themeToggle').setAttribute('aria-label', light?'Switch to dark mode':'Switch to light mode');
 }
-function initTheme(){
-  const saved=localStorage.getItem('shakalaka-theme');
-  const preferred=window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  applyTheme(saved || preferred);
-}
+function initTheme(){ applyTheme(localStorage.getItem('sentry-theme') || 'dark'); }
 document.getElementById('themeToggle').addEventListener('click',()=>{
-  const next=document.body.classList.contains('light-mode')?'dark':'light';
-  localStorage.setItem('shakalaka-theme',next);
+  const next=document.getElementById('themeLabel').textContent==='Dark'?'light':'dark';
+  localStorage.setItem('sentry-theme',next);
   applyTheme(next);
 });
 
-/* --- initial load --- */
 initTheme();
 loadInterfaces();
 loadLiveStatus();
@@ -704,32 +697,17 @@ loadGeminiStatus();
 startLiveStatusPolling();
 loadStats();
 loadGroups();
-loadAllLogs();
 
-/* --- auto-refresh polling: update stats + groups every 5 seconds,
-       and refresh the selected source's logs silently (without
-       touching chat history or disrupting user interaction). --- */
 setInterval(async () => {
   await loadStats();
   await loadGroups();
-  // Keep the Logs panel useful even before a source is selected.
-  if(!selectedGroup){
-    await loadAllLogs();
-  }
-  // If a source is selected, silently refresh its log list
   if(selectedGroup){
     try{
       const logsRes = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/logs`);
-      if(logsRes.ok){
-        const logs = await logsRes.json();
-        renderLogs(Array.isArray(logs) ? logs : [], 'No flows captured yet. Start live monitoring to populate flow analysis.');
-      }
-    }catch(e){
-      // Silently ignore polling errors for selected-source log refresh
-    }
+      if(logsRes.ok){ const logs = await logsRes.json(); renderFlowsMini(Array.isArray(logs) ? logs : []); }
+    }catch(e){}
   }
 }, 5000);
 </script>
-
 </body>
 </html>
