@@ -426,24 +426,23 @@ function fmtPps(p){ return p != null ? p.toLocaleString() : '0'; }
 
 async function loadStats(){
   try{
-    const res = await fetch('/api/stats');
-    const s = await res.json();
-    const total = s.flows_analyzed || 0;
-    const flagPct = total > 0 ? ((s.flagged / total) * 100).toFixed(3) : '0.000';
-    const strip = [
-      {label:'Flows analyzed', value:total.toLocaleString(), sub:s.flows_analyzed_window || '—', cls:''},
-      {label:'Flagged', value:s.flagged, sub:s.flagged_sources + ' flagged sources · ' + flagPct + '% of total', cls:'flag'},
-      {label:'Threat score', value:latestThreatScore.toFixed(0)+'%', sub:latestMlPrediction ? 'strongest malicious model confidence' : 'waiting for ML inference', cls:latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : ''}
-    
-    document.getElementById('statStrip').innerHTML = strip.map(s => `
-      <div class="stat ${s.cls}">
-        <div class="label">${s.label}</div>
-        <div class="value mono">${s.value}</div>
-        <div class="sub">${s.sub}</div>
+    const res=await fetch('/api/stats');
+    const s=await res.json();
+    const total=s.flows_analyzed||0;
+    const flagPct=total>0?((s.flagged/total)*100).toFixed(1):'0.0';
+    const strip=[
+      {icon:'◈',label:'Flows analyzed',value:total.toLocaleString(),sub:s.flows_analyzed_window||'LIVE FLOW COUNT',cls:''},
+      {icon:'⚑',label:'Flagged sources',value:s.flagged||0,sub:(s.flagged_sources||0)+' sources · '+flagPct+'% of flows',cls:'flag'},
+      {icon:'◎',label:'Threat score',value:latestThreatScore.toFixed(0)+'%',sub:latestMlPrediction?'strongest malicious model confidence':'waiting for ML inference',cls:latestThreatScore>=RESPONSE_THRESHOLD?'flag':''}
+    ];
+    document.getElementById('statStrip').innerHTML=strip.map(item=>`
+      <div class="stat ${item.cls}">
+        <div class="stat-icon">${item.icon}</div>
+        <div class="label">${item.label}</div>
+        <div class="value">${item.value}</div>
+        <div class="sub">${item.sub}</div>
       </div>`).join('');
-  }catch(e){
-    console.error('[Dashboard] Failed to load stats:', e);
-  }
+  }catch(e){console.error('[Dashboard] Failed to load stats:',e);}
 }
 
 async function loadGroups(){
