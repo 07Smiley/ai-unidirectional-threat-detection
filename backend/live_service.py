@@ -42,6 +42,7 @@ class LiveMonitoringService:
             "prediction": None,
             "source_ip": None,
             "destination_ip": None,
+            "predictions_by_model": {},
         }
 
     def confirm_response(self, action: str, ip: str) -> dict[str, Any]:
@@ -78,6 +79,14 @@ class LiveMonitoringService:
             }
             self.latest_ml["source_ip"] = event.get("src_ip")
             self.latest_ml["destination_ip"] = event.get("dst_ip")
+            model_name = event.get("model")
+            if model_name:
+                self.latest_ml["predictions_by_model"][str(model_name)] = {
+                    "label": label,
+                    "confidence": event.get("confidence"),
+                    "src_ip": event.get("src_ip"),
+                    "dst_ip": event.get("dst_ip"),
+                }
         elif event.get("type") == "threat_score":
             self.latest_ml["score"] = float(event.get("score", 0.0))
             self.latest_ml["response_available"] = bool(event.get("response_available", False))
@@ -152,6 +161,7 @@ class LiveMonitoringService:
             "prediction": None,
             "source_ip": None,
             "destination_ip": None,
+            "predictions_by_model": {},
         }
         self.packet_capture = LivePacketCapture(
             interface=interface,
