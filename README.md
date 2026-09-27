@@ -40,52 +40,9 @@ The application is designed around **passive monitoring**. It does not need to a
 
 ## Unidirectional detection model
 
-The live ML engine uses a strict forward-only feature schema. It does not feed Bwd/Backward
-features or aggregate fields such as Total Packets / Total Bytes into the ML models.
+The live ML engine uses a strict forward-only feature schema. It does not feed Bwd/Backward features or aggregate fields such as Total Packets / Total Bytes into the ML models.
 
-The same unidirectional observation can support multiple threat families. DDoS is only one
-detector; the runtime loads separate unidirectional artifacts for DDoS, DoS, PortScan,
-Infiltration, Patator, WebAttack and Bot/Net behavior. The live packet-derived ML path is
-limited to the features defined by the runtime schema. Other behavioral detectors must
-receive the telemetry they require; they are not treated as live detections merely because
-their standalone modules exist.
-
-
-### 1. Directionality / asymmetry score
-Measure how strongly a flow behaves as one-way traffic using packet, byte and timing statistics.
-
-### 2. One-way session detector
-Identify sessions where packets consistently travel in only one observed direction. Useful for data-diode and passive sensor deployments.
-
-### 3. Egress-only exfiltration detection
-Detect unusual outbound byte volume, long-lived flows, burst patterns and destination changes when return traffic is unavailable.
-
-### 4. Ingress-only attack detection
-Detect floods, scanning and abnormal connection attempts from the traffic entering the monitored enclave.
-
-### 5. DNS-only anomaly detection
-Use DNS request-side metadata such as query length, entropy, NXDOMAIN rate, domain diversity and request frequency when response traffic is not visible.
-
-### 6. TLS ClientHello fingerprinting
-Use visible TLS handshake metadata such as SNI, version, cipher/extension characteristics and JA3/JA4-style fingerprints where available, without requiring payload inspection.
-
-### 7. QUIC metadata analysis
-Detect unusual QUIC traffic patterns from the metadata visible to the sensor, including destination concentration and timing/volume anomalies.
-
-### 8. Beaconing without response packets
-Model periodic outbound connection attempts using inter-arrival timing, destination stability and burst regularity even when the corresponding response direction is absent.
-
-### 9. Protocol-aware one-way baselines
-Maintain separate normal baselines for DNS, HTTP-like traffic, TLS, QUIC, industrial/OT protocols and other protocols observed in the deployment.
-
-### 10. Data-diode health monitoring
-Add a dedicated health signal for unexpected reverse-direction packets, traffic gaps, interface loss, Zeek failure and sensor/log stalls.
-
-### 11. Unidirectional flow correlation
-Correlate multiple one-way observations by source, destination, port, protocol and time window instead of relying on a conventional two-way connection record.
-
-### 12. Adaptive threat scoring
-Combine directionality, rate, entropy, protocol metadata and model confidence into a transparent threat score with the contributing signals shown in the dashboard.
+The same unidirectional observation can support multiple threat families. DDoS is only one detector; the runtime loads separate unidirectional artifacts for DDoS, DoS, PortScan, Infiltration, Patator, WebAttack and Bot/Net behavior. The live packet-derived ML path is limited to the features defined by the runtime schema. Other behavioral detectors must receive the telemetry they require; they are not treated as live detections merely because their standalone modules exist.
 
 ## Detection roadmap
 
@@ -154,7 +111,7 @@ brew install zeek
 
 Homebrew currently provides a Zeek formula with macOS binary bottles, so the project does not need to build Zeek from source on macOS.
 
-The Homebrew bootstrap may still require normal macOS administrator authentication or Command Line Tools setup. Homebrew documents `NONINTERACTIVE=1` for unattended installer runs, but that does not bypass operating-system permission requirements.
+The Homebrew bootstrap may still require normal macOS administrator authentication or Command Line Tools setup.
 
 For development dependencies, create the virtual environment once:
 
@@ -168,7 +125,7 @@ Live capture may require the appropriate packet-capture permissions.
 
 ### Windows
 
-Zeek's native Windows support is **experimental**. Live capture requires Npcap and a Zeek build linked against the Npcap SDK; the normal Windows libpcap build is not sufficient for live capture. Zeek documents the Windows build as experimental and specifically requires Npcap for live-interface capture.
+Zeek's native Windows support is **experimental**. Live capture requires Npcap and a Zeek build linked against the Npcap SDK; the normal Windows libpcap build is not sufficient for live capture.
 
 The normal entry point is now:
 
@@ -176,35 +133,15 @@ The normal entry point is now:
 python app.py
 ```
 
-If Zeek is missing, `app.py` automatically launches the project Windows bootstrap. The bootstrap can:
+If Zeek is missing, `app.py` automatically launches the project Windows bootstrap. The bootstrap can request UAC elevation, enable required Windows Developer Mode support, install build dependencies through WinGet, install Npcap, configure Zeek with the Npcap SDK, and build a project-local Zeek executable.
 
-- request UAC elevation;
-- enable Windows Developer Mode needed by Zeek's source symlinks;
-- install Git, CMake, and Ninja through WinGet;
-- install Microsoft Visual Studio Build Tools with the C++ workload through WinGet;
-- download the official Npcap installer and wait for its interactive installation;
-- download and extract the official Npcap SDK;
-- clone Zeek with submodules;
-- configure Zeek with `-DPCAP_ROOT_DIR` for Npcap;
-- build a project-local `.third_party\\zeek\\build\\src\\zeek.exe`.
-
-Microsoft documents WinGet/Build Tools command-line installation, and Npcap documents that the free edition uses an installer while silent installation is an OEM-only feature.
-
-**One unavoidable manual step:** the free Npcap installer can show its normal installer/UAC prompts. We do not redistribute Npcap or embed it in this repository. After that prompt is completed, the bootstrap continues automatically.
-
-You can also run the helper directly:
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\\scripts\\windows\\setup-zeek.ps1
-```
+**One unavoidable manual step:** the free Npcap installer can show its normal installer/UAC prompts. We do not redistribute Npcap or embed it in this repository.
 
 Once Zeek is built, rerun:
 
 ```powershell
 python app.py
 ```
-
 
 Open the dashboard at:
 
@@ -224,6 +161,7 @@ http://127.0.0.1:8000
 - `GET /api/live/status` — live sensor status and interfaces
 - `POST /api/live/start` — start live monitoring
 - `POST /api/live/stop` — stop live monitoring
+- `POST /api/live/response` — explicitly confirmed block/unblock action
 - `WS /ws/threats` — live threat events
 
 Example start request:
@@ -252,11 +190,33 @@ docs/                  Architecture and project documentation
 data/                  Local training/test data and runtime output
 ```
 
-## Important ML note
+## ML runtime
 
-The live runtime validates model artifacts against the features available from the live Zeek pipeline. This prevents an incompatible model from being presented as a valid live detector.
+The live runtime now loads and validates the seven deployed unidirectional model artifacts:
 
-The next ML step is to train/validate the deployed models using the **same feature schema produced by live Zeek traffic**, then connect those predictions directly to the dashboard's flow verdicts.
+- `bot_unidirectional.pkl`
+- `ddos_unidirectional.pkl`
+- `dos_unidirectional.pkl`
+- `infiltration_unidirectional.pkl`
+- `patator_unidirectional.pkl`
+- `portscan_unidirectional.pkl`
+- `webattack_unidirectional.pkl`
+
+Each artifact must declare the exact forward-only feature schema and the supported `random_forest_unidirectional` model type. Legacy bidirectional detector artifacts are ignored by live inference.
+
+The live packet-derived ML predictions are connected to the FastAPI event stream and dashboard. The dashboard distinguishes the winning model's ML confidence from the overall threat score. The current threat score is the strongest malicious model confidence for the observed flow; it is not a calibrated ensemble probability.
+
+A threat score at or above the configured **92% response threshold** creates a response offer only. The dashboard requires explicit user confirmation before calling `POST /api/live/response`; blocking is never automatic.
+
+## Training the seven unidirectional models
+
+Training data stays local and is never committed to the repository. Point the batch trainer at a directory containing CICIDS/CICFlowMeter CSV files:
+
+```bash
+python -m src.models.train_all_unidirectional /path/to/cicids_csvs src/models/pkl
+```
+
+The trainer uses the same `UNIDIRECTIONAL_FEATURES` contract as live inference and produces the seven artifacts above. It also prints classification reports so the model metrics can be reviewed before enabling response actions.
 
 ## Testing
 
@@ -267,47 +227,18 @@ source .venv/bin/activate
 pytest -q
 ```
 
-The Zeek manager also has a live-capture smoke check that starts Zeek on a selected interface, verifies the live `conn.log` path, and cleans the sensor up again. This is stronger than checking only `zeek --version`, but a real deployment still needs a real-NIC test with controlled traffic on each target operating system.
+CI runs the automated test suite on pushes to the repository. The test suite covers feature-contract isolation, model artifact validation, live pipeline behavior, detection rules, dashboard data paths, and response-policy behavior.
+
+The Zeek manager also has a live-capture smoke check that starts Zeek on a selected interface, verifies the live `conn.log` path, and cleans the sensor up again. A real deployment still needs a controlled real-NIC test with representative traffic on each target operating system.
 
 ## Security notes
 
 - Monitoring is passive; do not use this project to disrupt or interfere with networks you do not own or have permission to monitor.
 - Keep captured traffic and logs protected because network metadata can contain sensitive information.
 - Run the sensor with the minimum privileges required for packet capture.
+- Store optional Gemini credentials such as `GEMINI_API_KEY` in the local environment or `.env`; never commit them.
 - Do not commit live logs, credentials, PCAPs containing sensitive traffic, or generated Python cache files.
 
 ## License
 
 See [LICENSE](LICENSE).
-
-
-## Train the seven unidirectional models
-
-Training data stays local and is never committed to the repository. Point the
-batch trainer at a directory containing CICIDS/CICFlowMeter CSV files:
-
-```bash
-python -m src.models.train_all_unidirectional /path/to/cicids_csvs src/models/pkl
-```
-
-It produces:
-
-- `bot_unidirectional.pkl`
-- `ddos_unidirectional.pkl`
-- `dos_unidirectional.pkl`
-- `infiltration_unidirectional.pkl`
-- `patator_unidirectional.pkl`
-- `portscan_unidirectional.pkl`
-- `webattack_unidirectional.pkl`
-
-The live runtime loads only these *_unidirectional.pkl artifacts. Legacy
-*_detector.pkl files are not used by live inference, even if they remain in the
-repository for historical compatibility. The trainer prints a classification report
-for each detector; those metrics must be reviewed before using response actions.
-
-## User-confirmed response
-
-A threat score at or above the configured response threshold creates a response
-offer only. The dashboard asks for explicit confirmation before calling
-`POST /api/live/response`. Blocking is performed on the monitored host using
-the platform firewall and is never automatic.
