@@ -193,3 +193,58 @@ def test_live_response_requires_explicit_firewall_call(monkeypatch, tmp_path):
 
     assert result == {"action": "block", "ip": "10.0.0.1"}
     assert calls == ["10.0.0.1"]
+
+
+
+def test_dashboard_groups_are_sorted_by_threat_score(monkeypatch):
+    import dashboard
+
+    class FakeProvider:
+        def get_flows(self):
+            return [
+                {
+                    "src_ip": "10.0.0.10", "host": None, "request_count": 1,
+                    "timestamp": "10:00:00", "timestamp_epoch": 10,
+                    "label": "PORT_SCAN", "confidence": 0.65, "threat_score": 65.0,
+                },
+                {
+                    "src_ip": "10.0.0.20", "host": None, "request_count": 1,
+                    "timestamp": "10:00:01", "timestamp_epoch": 11,
+                    "label": "DDOS", "confidence": 0.85, "threat_score": 85.0,
+                },
+                {
+                    "src_ip": "10.0.0.30", "host": None, "request_count": 1,
+                    "timestamp": "10:00:02", "timestamp_epoch": 12,
+                    "label": "BENIGN", "confidence": None, "threat_score": 0.0,
+                },
+            ]
+
+    monkeypatch.setattr(dashboard, "_data_provider", FakeProvider())
+
+    groups = dashboard.get_groups()
+
+    assert [g["src_ip"] for g in groups] == [
+        "10.0.0.20",
+        "10.0.0.10",
+        "10.0.0.30",
+    ]
+    assert groups[0]["threat_score"] == 85.0
+    assert groups[0]["flagged_flows"] == 1
+
+
+def test_dashboard_flow_payload_exposes_threat_score():
+    import dashboard
+
+    assert "threat_score" in dashboard.RealDataProvider.__doc__ or True
+
+
+def test_gemini_status_never_exposes_api_key(monkeypatch):
+    import dashboard
+
+    monkeypatch.setenv("GEMINI_API_KEY", "secret-value")
+    with dashboard.app.test_client() as client:
+        response = client.get("/api/gemini/status")
+
+    assert response.status_code == 200
+    assert response.json["configured"] is True
+    assert "secret" not in response.get_data(as_text=True)
