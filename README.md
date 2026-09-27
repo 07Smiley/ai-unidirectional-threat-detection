@@ -31,8 +31,8 @@ The application is designed around **passive monitoring**. It does not need to a
 - Uses a dedicated live-log directory.
 - Tails Zeek logs without requiring manual log files.
 - Extracts live flow features.
-- Runs live rule-based detections for scanning, DDoS and beaconing over a rolling Zeek flow window.
-- Runs DGA and exfiltration detectors in the dashboard's Zeek-log analysis path when the required DNS/connection logs are available.
+- Runs the live detection gate from `src/detection`: scanning, DDoS, beaconing, DGA when DNS query telemetry is present, forward-only exfiltration, and TLS/QUIC traffic identification.
+- Routes any source flagged by the detection layer into the seven unidirectional ML models; packet ML does not run on unflagged sources.
 - Has an ML runtime with model/schema validation.
 - Streams live detection events through FastAPI WebSockets.
 - Dashboard provides live interface controls, status and threat events.
@@ -42,7 +42,7 @@ The application is designed around **passive monitoring**. It does not need to a
 
 The live ML engine uses a strict forward-only feature schema. It does not feed Bwd/Backward features or aggregate fields such as Total Packets / Total Bytes into the ML models.
 
-The same unidirectional observation can support multiple threat families. DDoS is only one detector; the runtime loads separate unidirectional artifacts for DDoS, DoS, PortScan, Infiltration, Patator, WebAttack and Bot/Net behavior. The live packet-derived ML path is limited to the features defined by the runtime schema. Other behavioral detectors must receive the telemetry they require; they are not treated as live detections merely because their standalone modules exist.
+The same unidirectional observation can support multiple threat families. DDoS is only one detector; the runtime loads separate unidirectional artifacts for DDoS, DoS, PortScan, Infiltration, Patator, WebAttack and Bot/Net behavior. The live packet-derived ML path is limited to the features defined by the runtime schema. The first-stage gate uses every detector for which the live telemetry is available. DGA requires a `query` field; TLS/QUIC identification uses observed protocol/port information. The encrypted module does not claim that ordinary TLS/QUIC is malicious.
 
 ## Detection roadmap
 
@@ -51,11 +51,11 @@ The same unidirectional observation can support multiple threat families. DDoS i
 | Live Zeek control | Implemented |
 | Live Zeek log reader | Implemented |
 | Live feature extraction | Implemented |
-| Rule-based live scanning/DDoS/beaconing | Implemented |
+| Live detection gate (scanning/DDoS/beaconing/DGA/exfiltration/TLS-QUIC identification) | Implemented when required telemetry is present |
 | Dashboard Zeek-log DGA detection | Implemented |
 | Dashboard Zeek-log exfiltration detection | Implemented |
-| Live DGA detection from DNS stream | **Not yet wired** |
-| Live TLS/QUIC anomaly detection | **Not yet implemented** |
+| Live DGA detection from DNS query telemetry | Implemented when query telemetry is supplied |
+| Live TLS/QUIC traffic identification | Implemented; this is identification, not anomaly scoring |
 | FastAPI live API | Implemented |
 | WebSocket live events | Implemented |
 | Dashboard live controls | Implemented |
