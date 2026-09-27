@@ -15,40 +15,31 @@ def detect_exfiltration(log_file):
     if df.empty:
         return []
 
-    # Convert byte fields to numbers
-    for column in ["orig_bytes", "resp_bytes"]:
-        if column in df.columns:
-            df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
-        else:
-            raise ValueError(
-                f"Exfiltration detection requires the '{column}' column."
-            )
+    # Only the observed/originating direction is used. Reverse traffic may
+    # be unavailable in a one-way monitoring deployment.
+    if "orig_bytes" not in df.columns:
+        raise ValueError(
+            "Exfiltration detection requires the 'orig_bytes' column."
+        )
+    df["orig_bytes"] = pd.to_numeric(
+        df["orig_bytes"], errors="coerce"
+    ).fillna(0)
 
     alerts = []
 
     for _, flow in df.iterrows():
 
-        outbound = flow.get("orig_bytes", 0)
-        inbound = flow.get("resp_bytes", 0)
+        outbound = float(flow.get("orig_bytes", 0))
 
-        total = outbound + inbound
-
-        if total == 0:
-            continue
-
-        # Outbound traffic dominates the connection
-        outbound_ratio = outbound / total
-
-        # Possible large outbound transfer
-        if outbound >= 1_000_000 and outbound_ratio >= 0.80:
+        # Possible large observed-direction transfer. No reverse-direction
+        # bytes are used to qualify or score the event.
+        if outbound >= 1_000_000:
 
             alerts.append({
                 "type": "possible_exfiltration",
                 "src_ip": flow.get("id.orig_h", "unknown"),
                 "dst_ip": flow.get("id.resp_h", "unknown"),
                 "outbound_bytes": int(outbound),
-                "inbound_bytes": int(inbound),
-                "outbound_ratio": round(outbound_ratio, 3),
                 "severity": "medium"
             })
 
