@@ -113,8 +113,19 @@ class LiveZeekReader:
         callback: Callable,
         stop_event=None,
     ) -> None:
-        """Follow the log and call callback(batch) until stopped."""
-        self.initialize()
+        """Follow the log and call callback(batch) until stopped.
+
+        Zeek can take a short moment to create/write the live log after the
+        sensor process starts. Wait for the log/header instead of allowing
+        that startup race to terminate the live detection worker.
+        """
+        while self._fields is None:
+            if stop_event is not None and stop_event.is_set():
+                return
+            try:
+                self.initialize()
+            except (FileNotFoundError, ValueError):
+                time.sleep(self.poll_interval)
         while stop_event is None or not stop_event.is_set():
             batch = self.read_new()
             if batch is not None and not batch.empty:
