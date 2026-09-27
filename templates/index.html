@@ -1,546 +1,1516 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Sentry — Unidirectional Threat Detection</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
-<style>
-:root{
-  /* Spasex tokens */
-  --primary:#000000; --ink:#000000; --on-primary:#ffffff; --on-primary-mute:#f0f0fa;
-  --canvas-night:#000000; --canvas-night-soft:#0a0a0a;
-  --hairline-on-dark:#3a3a3f;
-  /* functional-only exceptions: the brand is strictly black/white, but a
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Sentry — Unidirectional Threat Detection</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Spasex tokens */
+      --primary: #000000;
+      --ink: #000000;
+      --on-primary: #ffffff;
+      --on-primary-mute: #f0f0fa;
+      --canvas-night: #000000;
+      --canvas-night-soft: #0a0a0a;
+      --hairline-on-dark: #3a3a3f;
+      /* functional-only exceptions: the brand is strictly black/white, but a
      threat dashboard needs a severity signal. Kept to a single red, used
      nowhere else. */
-  --sev-high:#ff3b30; --sev-mid:#ffffff; --sev-low:#8a8a90;
+      --sev-high: #ff3b30;
+      --sev-mid: #ffffff;
+      --sev-low: #8a8a90;
 
-  --bg:var(--canvas-night); --panel:var(--canvas-night-soft); --line:var(--hairline-on-dark);
-  --text:var(--on-primary); --muted:var(--on-primary-mute); --dim:#8a8a90;
-  --header-h:76px;
-  font-family:Inter,"Arial Narrow",Arial,Verdana,sans-serif;
-}
-/* Light-mode token swap (Spasex shop-site palette). Every rule below
+      --bg: var(--canvas-night);
+      --panel: var(--canvas-night-soft);
+      --line: var(--hairline-on-dark);
+      --text: var(--on-primary);
+      --muted: var(--on-primary-mute);
+      --dim: #8a8a90;
+      --header-h: 76px;
+      font-family: Inter, "Arial Narrow", Arial, Verdana, sans-serif;
+    }
+
+    /* Light-mode token swap (Spasex shop-site palette). Every rule below
    references these variables, so overriding them here is enough to
    re-skin the whole page — no separate light-mode ruleset needed. */
-body.light-mode{
-  --canvas-night:#ffffff; --canvas-night-soft:#f0f0fa;
-  --hairline-on-dark:#e0e0e8;
-  --on-primary:#000000; --on-primary-mute:#5a5a5f; --dim:#7a7a82;
-  --sev-mid:#000000;
-  color-scheme:light;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-html{height:100%;color-scheme:dark}
-body{
-  background:var(--bg);color:var(--text);line-height:1.5;
-  min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;
-  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
-}
-button,input,select{font:inherit}
-svg{display:block}
-.icon{width:18px;height:18px;flex-shrink:0}
-.caps{text-transform:uppercase}
+    body.light-mode {
+      --canvas-night: #ffffff;
+      --canvas-night-soft: #f0f0fa;
+      --hairline-on-dark: #e0e0e8;
+      --on-primary: #000000;
+      --on-primary-mute: #5a5a5f;
+      --dim: #7a7a82;
+      --sev-mid: #000000;
+      color-scheme: light;
+    }
 
-/* Display / eyebrow typographic scale, per Spasex tokens (Inter substitute for D-DIN) */
-h1,h2{text-transform:uppercase;font-weight:700;letter-spacing:.96px}
-.micro{font-size:12px;font-weight:400;text-transform:uppercase;letter-spacing:.96px;line-height:2}
-.button-cap{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1.17px;line-height:.94}
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
 
-/* ---------- App shell ---------- */
-header{
-  flex:0 0 auto;min-height:var(--header-h);
-  background:var(--canvas-night);border-bottom:1px solid var(--hairline-on-dark);
-  display:flex;align-items:center;gap:20px;padding:18px 32px;
-  position:sticky;top:env(safe-area-inset-top,0px);z-index:20;flex-wrap:wrap;
-}
-.brand{display:flex;align-items:center;gap:14px;min-width:0;flex-shrink:0}
-.brand svg{width:30px;height:30px;color:var(--on-primary);flex-shrink:0}
-.brand-text h1{font-size:19px;letter-spacing:1.2px;white-space:nowrap}
-.brand-text p{font-size:11px;color:var(--on-primary-mute);text-transform:uppercase;letter-spacing:.96px;margin-top:4px;white-space:nowrap}
-.model-badge{margin-left:auto;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--on-primary);color:var(--on-primary);border-radius:32px;padding:10px 20px;white-space:nowrap;background:transparent;flex-shrink:0}
-.live-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0}
-.live-select{height:38px;background:transparent;color:var(--text);border:1px solid var(--hairline-on-dark);border-radius:32px;padding:0 16px;min-width:120px;max-width:170px;outline:none;text-transform:uppercase;font-size:12px;letter-spacing:.6px}
-.live-btn{height:38px;display:inline-flex;align-items:center;gap:6px;border-radius:32px;padding:0 20px;border:1px solid var(--on-primary);background:transparent;color:var(--on-primary);cursor:pointer;white-space:nowrap}
-.live-btn.secondary{color:var(--dim);border-color:var(--hairline-on-dark)}
-.live-btn:disabled{opacity:.35;cursor:not-allowed}
-.live-status{display:none!important}
-.theme-toggle{height:38px;display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--hairline-on-dark);border-radius:32px;padding:0 18px;color:var(--text);cursor:pointer;white-space:nowrap;flex-shrink:0}
+    html {
+      height: 100%;
+      color-scheme: dark
+    }
 
-.shell{flex:1 1 auto;min-height:0;max-width:1600px;width:100%;margin:0 auto;padding:20px 32px 24px;display:flex;flex-direction:column;gap:16px}
+    body {
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
 
-/* ---------- Stats ---------- */
-.stats{flex:0 0 auto;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
-.stat{position:relative;min-height:100px;background:var(--canvas-night-soft);border:1px solid var(--hairline-on-dark);border-radius:8px;padding:18px 18px 16px 92px}
-.stat-icon-wrap{position:absolute;left:16px;top:18px;width:52px;height:52px;border-radius:8px;border:1px solid var(--hairline-on-dark);display:flex;align-items:center;justify-content:center;color:var(--on-primary)}
-.stat-icon-wrap svg{width:24px;height:24px}
-.stat.flag .stat-icon-wrap,.stat.flag .value{color:var(--sev-high)}
-.stat .label{font-size:11px;color:var(--on-primary-mute);text-transform:uppercase;letter-spacing:.96px}
-.stat .value{font-size:22px;line-height:1.25;font-weight:700;letter-spacing:.4px;margin-top:8px;word-break:break-word}
-.stat.model .value{font-size:15px;line-height:1.35;text-transform:uppercase;letter-spacing:.6px}
-.stat .sub{font-size:11px;color:var(--dim);margin-top:6px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+    button,
+    input,
+    select {
+      font: inherit
+    }
 
-.response-panel{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;background:var(--canvas-night-soft);border:1px solid var(--sev-high);border-radius:8px;padding:14px 18px}
-.response-panel[hidden]{display:none!important}
-.response-title{font-size:12px;color:var(--sev-high);letter-spacing:1px;text-transform:uppercase;font-weight:700;display:flex;align-items:center;gap:8px}
-.response-detail{font-size:12px;margin-top:5px;color:var(--on-primary-mute)}.response-meta{font-size:10px;color:var(--dim);margin-top:3px;text-transform:uppercase;letter-spacing:.6px}.response-panel>div:last-child{display:flex;gap:10px;flex-shrink:0}
+    svg {
+      display: block
+    }
 
-.threat-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999}
-.threat-modal-backdrop[hidden]{display:none!important}
-.threat-modal{width:min(560px,100%);max-height:90vh;overflow-y:auto;background:var(--canvas-night-soft);border:1px solid var(--sev-high);border-radius:8px;padding:30px;color:var(--on-primary)}
-.threat-modal .kicker{font-size:11px;letter-spacing:1.2px;color:var(--sev-high);text-transform:uppercase;font-weight:700;display:flex;align-items:center;gap:8px}
-.threat-modal h3{font-size:26px;letter-spacing:1px;margin:10px 0}.threat-modal .score{font-size:44px;font-weight:800;letter-spacing:.5px;color:var(--sev-high)}
-.threat-modal .meta{font-size:14px;color:var(--on-primary-mute);line-height:1.8;margin-top:10px}.threat-modal .meta strong{color:var(--ink);color:var(--on-primary);font-weight:700}
-.threat-modal .actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px;margin-top:26px}
-.threat-modal button{border-radius:32px;padding:14px 24px;cursor:pointer;border:1px solid var(--on-primary);background:transparent;color:var(--on-primary)}
-.threat-modal .block{border-color:var(--sev-high);color:var(--sev-high)}
+    .icon {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0
+    }
 
-/* ---------- Two sections: Logs (left) + Details & follow-up (right) ---------- */
-.main{flex:1 1 auto;min-height:300px;display:grid;grid-template-columns:1fr 32px 1.6fr;gap:10px;align-items:stretch}
-.flow-arrow{display:flex;align-items:center;justify-content:center}
-.flow-arrow-chip{width:30px;height:30px;border-radius:9999px;border:1px solid var(--hairline-on-dark);display:flex;align-items:center;justify-content:center;color:var(--on-primary);background:var(--canvas-night-soft)}
-.flow-arrow-chip svg{width:14px;height:14px}
+    .caps {
+      text-transform: uppercase
+    }
 
-.panel{background:var(--canvas-night-soft);border:1px solid var(--hairline-on-dark);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-height:0}
-.panel-head{flex:0 0 auto;min-height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--hairline-on-dark);gap:10px}
-.panel-head h2{font-size:15px;letter-spacing:1px;white-space:nowrap}
-.panel-head .count{font-size:10px;color:var(--on-primary);border:1px solid var(--on-primary);border-radius:32px;padding:6px 14px;text-transform:uppercase;letter-spacing:.8px;white-space:nowrap;flex-shrink:0;max-width:52%;overflow:hidden;text-overflow:ellipsis}
+    /* Display / eyebrow typographic scale, per Spasex tokens (Inter substitute for D-DIN) */
+    h1,
+    h2 {
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: .96px
+    }
 
-.list-caption{flex:0 0 auto;display:flex;justify-content:space-between;gap:10px;padding:9px 18px;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.96px;border-bottom:1px solid var(--hairline-on-dark)}
-.source-list{flex:1 1 auto;min-height:0;overflow-y:auto}
-.source-row{display:flex;align-items:center;gap:13px;padding:15px 18px;border-bottom:1px solid var(--hairline-on-dark);cursor:pointer;position:relative}
-.source-row:hover{background:rgba(255,255,255,.04)}.source-row.active{background:rgba(255,255,255,.06);box-shadow:inset 3px 0 0 var(--on-primary)}
-.source-row .sev{width:6px;height:48px;border-radius:6px;flex-shrink:0}
-.source-row .who{flex:1;min-width:0}.source-row .primary{font-size:16px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.source-row .secondary{font-size:11px;color:var(--dim);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase;letter-spacing:.4px}
-.source-row .score-value{display:inline-block;font-size:12px;font-weight:700;background:transparent;border:1px solid var(--on-primary);color:var(--on-primary);border-radius:32px;padding:7px 12px;flex-shrink:0}
-.source-row.severity-high .score-value{border-color:var(--sev-high);color:var(--sev-high)}
+    .micro {
+      font-size: 12px;
+      font-weight: 400;
+      text-transform: uppercase;
+      letter-spacing: .96px;
+      line-height: 2
+    }
 
-.detail-panel{display:flex;flex-direction:column;min-height:0}
-.source-detail{flex:0 0 auto;padding:18px;background:var(--canvas-night);border-bottom:1px solid var(--hairline-on-dark)}
-.source-detail[hidden]{display:none!important}
-.detail-title{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:flex-start}.detail-title .ip{font-size:20px;font-weight:700;letter-spacing:.6px;word-break:break-word}.detail-title .secondary{font-size:11px;color:var(--dim);margin-top:6px;text-transform:uppercase;letter-spacing:.4px}
-.detail-verdict{display:inline-block;margin-left:8px;background:transparent;border:1px solid var(--sev-high);color:var(--sev-high);border-radius:32px;padding:5px 12px;font-size:12px;font-weight:700;vertical-align:middle}
-.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:16px}.detail-metric{padding:0 4px}.detail-metric .k{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.96px}.detail-metric .v{font-size:13px;margin-top:5px;word-break:break-word;font-weight:500}
-.detail-reasons{margin-top:16px;background:var(--canvas-night-soft);border:1px solid var(--hairline-on-dark);border-radius:8px;padding:14px 16px;font-size:12px;color:var(--on-primary-mute);line-height:1.75}
-.detail-reasons strong{display:flex;align-items:center;gap:6px;color:var(--sev-high);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:6px;font-size:11px}
+    .button-cap {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.17px;
+      line-height: .94
+    }
 
-.flows-mini{flex:0 0 auto;max-height:150px;overflow-y:auto;border-bottom:1px solid var(--hairline-on-dark)}
-.flows-mini-head{position:sticky;top:0;display:grid;grid-template-columns:64px 1fr 52px 60px;gap:6px;padding:8px 18px;color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.96px;background:var(--canvas-night-soft);border-bottom:1px solid var(--hairline-on-dark)}
-.flows-mini-row{display:grid;grid-template-columns:64px 1fr 52px 60px;gap:6px;align-items:center;padding:8px 18px;font-size:11px;border-bottom:1px solid var(--hairline-on-dark)}
-.flows-mini-row .path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.flows-mini-row .lbl{font-size:9px;font-weight:700;padding:3px 8px;border-radius:32px;text-transform:uppercase;text-align:center;letter-spacing:.4px}
-.flows-mini-row .lbl.ddos{color:var(--sev-high);border:1px solid var(--sev-high)}.flows-mini-row .lbl.benign{color:var(--dim);border:1px solid var(--hairline-on-dark)}
+    /* ---------- App shell ---------- */
+    header {
+      flex: 0 0 auto;
+      min-height: var(--header-h);
+      background: var(--canvas-night);
+      border-bottom: 1px solid var(--hairline-on-dark);
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      padding: 18px 32px;
+      position: sticky;
+      top: env(safe-area-inset-top, 0px);
+      z-index: 20;
+      flex-wrap: wrap;
+    }
 
-.chat-wrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
-.chat-log{flex:1 1 auto;min-height:0;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px}
-.chat-row{display:flex}.chat-row.user{justify-content:flex-end}
-.chat-row .bubble{max-width:92%;font-size:13px;line-height:1.6;padding:12px 15px;border-radius:8px;background:var(--canvas-night);border:1px solid var(--hairline-on-dark);color:var(--on-primary-mute)}
-.chat-row.user .bubble{background:transparent;border-color:var(--on-primary);color:var(--on-primary)}
-.chat-row .bubble .verdict{display:inline-block;font-size:10px;font-weight:700;padding:4px 10px;border-radius:32px;margin-bottom:7px;text-transform:uppercase;letter-spacing:.6px}
-.chat-row .bubble .verdict.ddos{color:var(--sev-high);border:1px solid var(--sev-high)}.chat-row .bubble .verdict.benign{color:var(--dim);border:1px solid var(--hairline-on-dark)}
-.chat-row .bubble ul{list-style:none;display:flex;flex-direction:column;gap:4px;margin-top:6px}.chat-row .bubble li{padding-left:12px;position:relative}.chat-row .bubble li::before{content:"–";position:absolute;left:0;color:var(--dim)}
-.chat-input-row{flex:0 0 auto;display:flex;align-items:center;gap:6px;margin:14px 16px 16px;padding:5px 6px 5px 18px;border:1px solid var(--on-primary);border-radius:32px;background:transparent}
-.chat-input{flex:1;background:transparent;border:0;padding:9px 0;color:var(--text);outline:none;min-width:0;font-size:13px}
-.chat-input::placeholder{color:var(--dim);text-transform:uppercase;font-size:11px;letter-spacing:.6px}
-.chat-send{background:transparent;color:var(--on-primary);border:1px solid var(--on-primary);border-radius:32px;width:34px;height:34px;flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
-.chat-send svg{width:15px;height:15px;margin-left:1px}
-.chat-send:disabled{opacity:.35}
-.gemini-status{font-size:10px;letter-spacing:.96px;text-transform:uppercase;color:var(--dim);white-space:nowrap;display:flex;align-items:center;gap:6px}
-.gemini-status.ready{color:var(--on-primary)}
-.gemini-status .dot{width:6px;height:6px;border-radius:9999px;background:currentColor;flex-shrink:0}
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      flex-shrink: 0
+    }
 
-.typing-dots{display:flex;gap:4px;padding:2px 0}.typing-dots span{width:5px;height:5px;border-radius:9999px;background:var(--dim);animation:blink 1.2s infinite ease-in-out}.typing-dots span:nth-child(2){animation-delay:.2s}.typing-dots span:nth-child(3){animation-delay:.4s}
-@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
-@media (prefers-reduced-motion:reduce){.typing-dots span{animation:none}}
+    .brand svg {
+      width: 30px;
+      height: 30px;
+      color: var(--on-primary);
+      flex-shrink: 0
+    }
 
-.empty{padding:36px 20px;text-align:center;color:var(--dim);font-size:13px}
-.sensor-control[hidden]{display:none!important}
-::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--hairline-on-dark);border-radius:7px}
-:focus-visible{outline:2px solid var(--on-primary);outline-offset:2px}
+    .brand-text h1 {
+      font-size: 19px;
+      letter-spacing: 1.2px;
+      white-space: nowrap
+    }
 
-@media(max-width:1200px){ .stats{grid-template-columns:repeat(3,minmax(0,1fr))} }
-@media(max-width:1100px){
-  body{overflow-y:auto}
-  .shell{padding:16px 20px 20px}
-  .main{grid-template-columns:1fr;gap:14px;min-height:0}
-  .flow-arrow{display:none}
-  .panel{height:48vh;min-height:300px}
-}
-@media(max-width:760px){
-  header{padding:14px 16px;gap:10px}
-  .brand-text h1{font-size:17px}
-  .model-badge{order:3;width:100%;justify-content:center}
-  .live-controls{margin-left:auto;justify-content:flex-end}
-  .stats{grid-template-columns:1fr 1fr;gap:8px}
-  .stat{min-height:88px;padding:15px 14px 12px 80px}
-  .stat-icon-wrap{width:44px;height:44px}
-  .shell{padding:14px 12px 16px;gap:10px}
-  .panel{height:50vh;min-height:280px}
-  .flows-mini-head,.flows-mini-row{grid-template-columns:56px 1fr 48px 52px}
-}
-@media(max-width:420px){
-  .stats{grid-template-columns:1fr}
-  .live-select{min-width:0;flex:1}
-  .theme-toggle span.label,.live-btn span.label{display:none}
-}
-</style>
+    .brand-text p {
+      font-size: 11px;
+      color: var(--on-primary-mute);
+      text-transform: uppercase;
+      letter-spacing: .96px;
+      margin-top: 4px;
+      white-space: nowrap
+    }
+
+    .model-badge {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--on-primary);
+      color: var(--on-primary);
+      border-radius: 32px;
+      padding: 10px 20px;
+      white-space: nowrap;
+      background: transparent;
+      flex-shrink: 0
+    }
+
+    .live-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      flex-shrink: 0
+    }
+
+    .live-select {
+      height: 38px;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--hairline-on-dark);
+      border-radius: 32px;
+      padding: 0 16px;
+      min-width: 120px;
+      max-width: 170px;
+      outline: none;
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: .6px
+    }
+
+    .live-btn {
+      height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 32px;
+      padding: 0 20px;
+      border: 1px solid var(--on-primary);
+      background: transparent;
+      color: var(--on-primary);
+      cursor: pointer;
+      white-space: nowrap
+    }
+
+    .live-btn.secondary {
+      color: var(--dim);
+      border-color: var(--hairline-on-dark)
+    }
+
+    .live-btn:disabled {
+      opacity: .35;
+      cursor: not-allowed
+    }
+
+    .live-status {
+      display: none !important
+    }
+
+    .theme-toggle {
+      height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: transparent;
+      border: 1px solid var(--hairline-on-dark);
+      border-radius: 32px;
+      padding: 0 18px;
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0
+    }
+
+    .shell {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-width: 1600px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px 32px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px
+    }
+
+    /* ---------- Stats ---------- */
+    .stats {
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px
+    }
+
+    .stat {
+      position: relative;
+      min-height: 100px;
+      background: var(--canvas-night-soft);
+      border: 1px solid var(--hairline-on-dark);
+      border-radius: 8px;
+      padding: 18px 18px 16px 92px
+    }
+
+    .stat-icon-wrap {
+      position: absolute;
+      left: 16px;
+      top: 18px;
+      width: 52px;
+      height: 52px;
+      border-radius: 8px;
+      border: 1px solid var(--hairline-on-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--on-primary)
+    }
+
+    .stat-icon-wrap svg {
+      width: 24px;
+      height: 24px
+    }
+
+    .stat.flag .stat-icon-wrap,
+    .stat.flag .value {
+      color: var(--sev-high)
+    }
+
+    .stat .label {
+      font-size: 11px;
+      color: var(--on-primary-mute);
+      text-transform: uppercase;
+      letter-spacing: .96px
+    }
+
+    .stat .value {
+      font-size: 22px;
+      line-height: 1.25;
+      font-weight: 700;
+      letter-spacing: .4px;
+      margin-top: 8px;
+      word-break: break-word
+    }
+
+    .stat.model .value {
+      font-size: 15px;
+      line-height: 1.35;
+      text-transform: uppercase;
+      letter-spacing: .6px
+    }
+
+    .stat .sub {
+      font-size: 11px;
+      color: var(--dim);
+      margin-top: 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical
+    }
+
+    .response-panel {
+      flex: 0 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      background: var(--canvas-night-soft);
+      border: 1px solid var(--sev-high);
+      border-radius: 8px;
+      padding: 14px 18px
+    }
+
+    .response-panel[hidden] {
+      display: none !important
+    }
+
+    .response-title {
+      font-size: 12px;
+      color: var(--sev-high);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    .response-detail {
+      font-size: 12px;
+      margin-top: 5px;
+      color: var(--on-primary-mute)
+    }
+
+    .response-meta {
+      font-size: 10px;
+      color: var(--dim);
+      margin-top: 3px;
+      text-transform: uppercase;
+      letter-spacing: .6px
+    }
+
+    .response-panel>div:last-child {
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0
+    }
+
+    .threat-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 9999
+    }
+
+    .threat-modal-backdrop[hidden] {
+      display: none !important
+    }
+
+    .threat-modal {
+      width: min(560px, 100%);
+      max-height: 90vh;
+      overflow-y: auto;
+      background: var(--canvas-night-soft);
+      border: 1px solid var(--sev-high);
+      border-radius: 8px;
+      padding: 30px;
+      color: var(--on-primary)
+    }
+
+    .threat-modal .kicker {
+      font-size: 11px;
+      letter-spacing: 1.2px;
+      color: var(--sev-high);
+      text-transform: uppercase;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    .threat-modal h3 {
+      font-size: 26px;
+      letter-spacing: 1px;
+      margin: 10px 0
+    }
+
+    .threat-modal .score {
+      font-size: 44px;
+      font-weight: 800;
+      letter-spacing: .5px;
+      color: var(--sev-high)
+    }
+
+    .threat-modal .meta {
+      font-size: 14px;
+      color: var(--on-primary-mute);
+      line-height: 1.8;
+      margin-top: 10px
+    }
+
+    .threat-modal .meta strong {
+      color: var(--ink);
+      color: var(--on-primary);
+      font-weight: 700
+    }
+
+    .threat-modal .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 26px
+    }
+
+    .threat-modal button {
+      border-radius: 32px;
+      padding: 14px 24px;
+      cursor: pointer;
+      border: 1px solid var(--on-primary);
+      background: transparent;
+      color: var(--on-primary)
+    }
+
+    .threat-modal .block {
+      border-color: var(--sev-high);
+      color: var(--sev-high)
+    }
+
+    /* ---------- Two sections: Logs (left) + Details & follow-up (right) ---------- */
+    .main {
+      flex: 1 1 auto;
+      min-height: 300px;
+      display: grid;
+      grid-template-columns: 1fr 32px 1.6fr;
+      gap: 10px;
+      align-items: stretch
+    }
+
+    .flow-arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center
+    }
+
+    .flow-arrow-chip {
+      width: 30px;
+      height: 30px;
+      border-radius: 9999px;
+      border: 1px solid var(--hairline-on-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--on-primary);
+      background: var(--canvas-night-soft)
+    }
+
+    .flow-arrow-chip svg {
+      width: 14px;
+      height: 14px
+    }
+
+    .panel {
+      background: var(--canvas-night-soft);
+      border: 1px solid var(--hairline-on-dark);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 0
+    }
+
+    .panel-head {
+      flex: 0 0 auto;
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--hairline-on-dark);
+      gap: 10px
+    }
+
+    .panel-head h2 {
+      font-size: 15px;
+      letter-spacing: 1px;
+      white-space: nowrap
+    }
+
+    .panel-head .count {
+      font-size: 10px;
+      color: var(--on-primary);
+      border: 1px solid var(--on-primary);
+      border-radius: 32px;
+      padding: 6px 14px;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      max-width: 52%;
+      overflow: hidden;
+      text-overflow: ellipsis
+    }
+
+    .list-caption {
+      flex: 0 0 auto;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 18px;
+      font-size: 10px;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: .96px;
+      border-bottom: 1px solid var(--hairline-on-dark)
+    }
+
+    .source-list {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto
+    }
+
+    .source-row {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      padding: 15px 18px;
+      border-bottom: 1px solid var(--hairline-on-dark);
+      cursor: pointer;
+      position: relative
+    }
+
+    .source-row:hover {
+      background: rgba(255, 255, 255, .04)
+    }
+
+    .source-row.active {
+      background: rgba(255, 255, 255, .06);
+      box-shadow: inset 3px 0 0 var(--on-primary)
+    }
+
+    .source-row .sev {
+      width: 6px;
+      height: 48px;
+      border-radius: 6px;
+      flex-shrink: 0
+    }
+
+    .source-row .who {
+      flex: 1;
+      min-width: 0
+    }
+
+    .source-row .primary {
+      font-size: 16px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis
+    }
+
+    .source-row .secondary {
+      font-size: 11px;
+      color: var(--dim);
+      margin-top: 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      letter-spacing: .4px
+    }
+
+    .source-row .score-value {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      background: transparent;
+      border: 1px solid var(--on-primary);
+      color: var(--on-primary);
+      border-radius: 32px;
+      padding: 7px 12px;
+      flex-shrink: 0
+    }
+
+    .source-row.severity-high .score-value {
+      border-color: var(--sev-high);
+      color: var(--sev-high)
+    }
+
+    .detail-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0
+    }
+
+    .source-detail {
+      flex: 0 0 auto;
+      padding: 18px;
+      background: var(--canvas-night);
+      border-bottom: 1px solid var(--hairline-on-dark)
+    }
+
+    .source-detail[hidden] {
+      display: none !important
+    }
+
+    .detail-title {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start
+    }
+
+    .detail-title .ip {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: .6px;
+      word-break: break-word
+    }
+
+    .detail-title .secondary {
+      font-size: 11px;
+      color: var(--dim);
+      margin-top: 6px;
+      text-transform: uppercase;
+      letter-spacing: .4px
+    }
+
+    .detail-verdict {
+      display: inline-block;
+      margin-left: 8px;
+      background: transparent;
+      border: 1px solid var(--sev-high);
+      color: var(--sev-high);
+      border-radius: 32px;
+      padding: 5px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      vertical-align: middle
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 12px;
+      margin-top: 16px
+    }
+
+    .detail-metric {
+      padding: 0 4px
+    }
+
+    .detail-metric .k {
+      font-size: 10px;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: .96px
+    }
+
+    .detail-metric .v {
+      font-size: 13px;
+      margin-top: 5px;
+      word-break: break-word;
+      font-weight: 500
+    }
+
+    .detail-reasons {
+      margin-top: 16px;
+      background: var(--canvas-night-soft);
+      border: 1px solid var(--hairline-on-dark);
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 12px;
+      color: var(--on-primary-mute);
+      line-height: 1.75
+    }
+
+    .detail-reasons strong {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--sev-high);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      font-size: 11px
+    }
+
+    .flows-mini {
+      flex: 0 0 auto;
+      max-height: 150px;
+      overflow-y: auto;
+      border-bottom: 1px solid var(--hairline-on-dark)
+    }
+
+    .flows-mini-head {
+      position: sticky;
+      top: 0;
+      display: grid;
+      grid-template-columns: 64px 1fr 52px 60px;
+      gap: 6px;
+      padding: 8px 18px;
+      color: var(--dim);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .96px;
+      background: var(--canvas-night-soft);
+      border-bottom: 1px solid var(--hairline-on-dark)
+    }
+
+    .flows-mini-row {
+      display: grid;
+      grid-template-columns: 64px 1fr 52px 60px;
+      gap: 6px;
+      align-items: center;
+      padding: 8px 18px;
+      font-size: 11px;
+      border-bottom: 1px solid var(--hairline-on-dark)
+    }
+
+    .flows-mini-row .path {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap
+    }
+
+    .flows-mini-row .lbl {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 32px;
+      text-transform: uppercase;
+      text-align: center;
+      letter-spacing: .4px
+    }
+
+    .flows-mini-row .lbl.ddos {
+      color: var(--sev-high);
+      border: 1px solid var(--sev-high)
+    }
+
+    .flows-mini-row .lbl.benign {
+      color: var(--dim);
+      border: 1px solid var(--hairline-on-dark)
+    }
+
+    .chat-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column
+    }
+
+    .chat-log {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px
+    }
+
+    .chat-row {
+      display: flex
+    }
+
+    .chat-row.user {
+      justify-content: flex-end
+    }
+
+    .chat-row .bubble {
+      max-width: 92%;
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 12px 15px;
+      border-radius: 8px;
+      background: var(--canvas-night);
+      border: 1px solid var(--hairline-on-dark);
+      color: var(--on-primary-mute)
+    }
+
+    .chat-row.user .bubble {
+      background: transparent;
+      border-color: var(--on-primary);
+      color: var(--on-primary)
+    }
+
+    .chat-row .bubble .verdict {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 32px;
+      margin-bottom: 7px;
+      text-transform: uppercase;
+      letter-spacing: .6px
+    }
+
+    .chat-row .bubble .verdict.ddos {
+      color: var(--sev-high);
+      border: 1px solid var(--sev-high)
+    }
+
+    .chat-row .bubble .verdict.benign {
+      color: var(--dim);
+      border: 1px solid var(--hairline-on-dark)
+    }
+
+    .chat-row .bubble ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 6px
+    }
+
+    .chat-row .bubble li {
+      padding-left: 12px;
+      position: relative
+    }
+
+    .chat-row .bubble li::before {
+      content: "–";
+      position: absolute;
+      left: 0;
+      color: var(--dim)
+    }
+
+    .chat-input-row {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 14px 16px 16px;
+      padding: 5px 6px 5px 18px;
+      border: 1px solid var(--on-primary);
+      border-radius: 32px;
+      background: transparent
+    }
+
+    .chat-input {
+      flex: 1;
+      background: transparent;
+      border: 0;
+      padding: 9px 0;
+      color: var(--text);
+      outline: none;
+      min-width: 0;
+      font-size: 13px
+    }
+
+    .chat-input::placeholder {
+      color: var(--dim);
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: .6px
+    }
+
+    .chat-send {
+      background: transparent;
+      color: var(--on-primary);
+      border: 1px solid var(--on-primary);
+      border-radius: 32px;
+      width: 34px;
+      height: 34px;
+      flex-shrink: 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0
+    }
+
+    .chat-send svg {
+      width: 15px;
+      height: 15px;
+      margin-left: 1px
+    }
+
+    .chat-send:disabled {
+      opacity: .35
+    }
+
+    .gemini-status {
+      font-size: 10px;
+      letter-spacing: .96px;
+      text-transform: uppercase;
+      color: var(--dim);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px
+    }
+
+    .gemini-status.ready {
+      color: var(--on-primary)
+    }
+
+    .gemini-status .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 9999px;
+      background: currentColor;
+      flex-shrink: 0
+    }
+
+    .typing-dots {
+      display: flex;
+      gap: 4px;
+      padding: 2px 0
+    }
+
+    .typing-dots span {
+      width: 5px;
+      height: 5px;
+      border-radius: 9999px;
+      background: var(--dim);
+      animation: blink 1.2s infinite ease-in-out
+    }
+
+    .typing-dots span:nth-child(2) {
+      animation-delay: .2s
+    }
+
+    .typing-dots span:nth-child(3) {
+      animation-delay: .4s
+    }
+
+    @keyframes blink {
+
+      0%,
+      80%,
+      100% {
+        opacity: .25
+      }
+
+      40% {
+        opacity: 1
+      }
+    }
+
+    @media (prefers-reduced-motion:reduce) {
+      .typing-dots span {
+        animation: none
+      }
+    }
+
+    .empty {
+      padding: 36px 20px;
+      text-align: center;
+      color: var(--dim);
+      font-size: 13px
+    }
+
+    .sensor-control[hidden] {
+      display: none !important
+    }
+
+    ::-webkit-scrollbar {
+      width: 7px;
+      height: 7px
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--hairline-on-dark);
+      border-radius: 7px
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--on-primary);
+      outline-offset: 2px
+    }
+
+    @media(max-width:1200px) {
+      .stats {
+        grid-template-columns: repeat(3, minmax(0, 1fr))
+      }
+    }
+
+    @media(max-width:1100px) {
+      body {
+        overflow-y: auto
+      }
+
+      .shell {
+        padding: 16px 20px 20px
+      }
+
+      .main {
+        grid-template-columns: 1fr;
+        gap: 14px;
+        min-height: 0
+      }
+
+      .flow-arrow {
+        display: none
+      }
+
+      .panel {
+        height: 48vh;
+        min-height: 300px
+      }
+    }
+
+    @media(max-width:760px) {
+      header {
+        padding: 14px 16px;
+        gap: 10px
+      }
+
+      .brand-text h1 {
+        font-size: 17px
+      }
+
+      .model-badge {
+        order: 3;
+        width: 100%;
+        justify-content: center
+      }
+
+      .live-controls {
+        margin-left: auto;
+        justify-content: flex-end
+      }
+
+      .stats {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px
+      }
+
+      .stat {
+        min-height: 88px;
+        padding: 15px 14px 12px 80px
+      }
+
+      .stat-icon-wrap {
+        width: 44px;
+        height: 44px
+      }
+
+      .shell {
+        padding: 14px 12px 16px;
+        gap: 10px
+      }
+
+      .panel {
+        height: 50vh;
+        min-height: 280px
+      }
+
+      .flows-mini-head,
+      .flows-mini-row {
+        grid-template-columns: 56px 1fr 48px 52px
+      }
+    }
+
+    @media(max-width:420px) {
+      .stats {
+        grid-template-columns: 1fr
+      }
+
+      .live-select {
+        min-width: 0;
+        flex: 1
+      }
+
+      .theme-toggle span.label,
+      .live-btn span.label {
+        display: none
+      }
+    }
+  </style>
 </head>
+
 <body>
 
-<header>
-  <div class="brand">
-    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 3L6 11V23C6 34 14 43 24 46C34 43 42 34 42 23V11L24 3Z" stroke="currentColor" stroke-width="1.6"/><path d="M16 24L21 29L33 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div class="brand-text"><h1>Sentry</h1><p>Passive unidirectional threat detection</p></div>
-  </div>
-  <span class="model-badge button-cap" id="modelBadge">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 17V13M9 17V9M14 17V6M19 17V11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-    Unidirectional ML · 7 models
-  </span>
-  <div class="live-controls">
-    <select id="interfaceSelect" class="live-select sensor-control"><option value="">Interface…</option></select>
-    <button id="liveStart" class="live-btn button-cap sensor-control">
-      <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 4L20 12L6 20V4Z" fill="currentColor"/></svg>
-      <span class="label">Start live</span>
-    </button>
-    <button id="liveStop" class="live-btn secondary button-cap sensor-control" disabled>
-      <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></svg>
-      <span class="label">Stop</span>
-    </button>
-    <button id="themeToggle" class="theme-toggle button-cap" type="button">
-      <svg class="icon" id="themeIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" fill="currentColor"/></svg>
-      <span class="label" id="themeLabel">Light</span>
-    </button>
-    <span id="liveStatus" class="live-status sensor-control">API OFFLINE</span>
-  </div>
-</header>
-<div class="shell">
-  <div class="stats" id="statStrip"></div>
-  <section class="response-panel" id="responsePanel" hidden>
-    <div>
-      <div class="response-title">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9L2.5 18a1.6 1.6 0 001.4 2.4h16.2a1.6 1.6 0 001.4-2.4L13.7 3.9a1.6 1.6 0 00-2.8 0z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-        Threat response available
+  <header>
+    <div class="brand">
+      <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <path d="M24 3L6 11V23C6 34 14 43 24 46C34 43 42 34 42 23V11L24 3Z" stroke="currentColor" stroke-width="1.6" />
+        <path d="M16 24L21 29L33 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+          stroke-linejoin="round" />
+      </svg>
+      <div class="brand-text">
+        <h1>Sentry</h1>
+        <p>Passive unidirectional threat detection</p>
       </div>
-      <div class="response-detail" id="responseDetail"></div><div class="response-meta" id="responseMeta"></div>
     </div>
-    <div><button class="live-btn button-cap" id="responseBlock">Block IP</button><button class="live-btn secondary button-cap" id="responseIgnore">Ignore</button></div>
-  </section>
-  <div class="threat-modal-backdrop" id="threatModal" hidden>
-    <div class="threat-modal" role="dialog" aria-modal="true" aria-labelledby="threatModalTitle">
-      <div class="kicker">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9L2.5 18a1.6 1.6 0 001.4 2.4h16.2a1.6 1.6 0 001.4-2.4L13.7 3.9a1.6 1.6 0 00-2.8 0z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-        Threat response request
+    <span class="model-badge button-cap" id="modelBadge">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 17V13M9 17V9M14 17V6M19 17V11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      </svg>
+      Unidirectional ML · 7 models
+    </span>
+    <div class="live-controls">
+      <select id="interfaceSelect" class="live-select sensor-control">
+        <option value="">Interface…</option>
+      </select>
+      <button id="liveStart" class="live-btn button-cap sensor-control">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6 4L20 12L6 20V4Z" fill="currentColor" />
+        </svg>
+        <span class="label">Start live</span>
+      </button>
+      <button id="liveStop" class="live-btn secondary button-cap sensor-control" disabled>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" />
+        </svg>
+        <span class="label">Stop</span>
+      </button>
+      <button id="themeToggle" class="theme-toggle button-cap" type="button">
+        <svg class="icon" id="themeIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" fill="currentColor" />
+        </svg>
+        <span class="label" id="themeLabel">Light</span>
+      </button>
+      <span id="liveStatus" class="live-status sensor-control">API OFFLINE</span>
+    </div>
+  </header>
+  <div class="shell">
+    <div class="stats" id="statStrip"></div>
+    <section class="response-panel" id="responsePanel" hidden>
+      <div>
+        <div class="response-title">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M12 9v4M12 17h.01M10.3 3.9L2.5 18a1.6 1.6 0 001.4 2.4h16.2a1.6 1.6 0 001.4-2.4L13.7 3.9a1.6 1.6 0 00-2.8 0z"
+              stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+          </svg>
+          Threat response available
+        </div>
+        <div class="response-detail" id="responseDetail"></div>
+        <div class="response-meta" id="responseMeta"></div>
       </div>
-      <h3 id="threatModalTitle">High threat detected</h3>
-      <div class="score" id="threatModalScore">93%</div>
-      <div class="meta" id="threatModalMeta">Source <strong>—</strong><br>Predicted threat <strong>—</strong><br>Model <strong>—</strong></div>
-      <div class="actions"><button class="button-cap" id="threatModalIgnore" type="button">Ignore</button><button class="block button-cap" id="threatModalBlock" type="button">Block IP</button></div>
+      <div><button class="live-btn button-cap" id="responseBlock">Block IP</button><button
+          class="live-btn secondary button-cap" id="responseIgnore">Ignore</button></div>
+    </section>
+    <div class="threat-modal-backdrop" id="threatModal" hidden>
+      <div class="threat-modal" role="dialog" aria-modal="true" aria-labelledby="threatModalTitle">
+        <div class="kicker">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M12 9v4M12 17h.01M10.3 3.9L2.5 18a1.6 1.6 0 001.4 2.4h16.2a1.6 1.6 0 001.4-2.4L13.7 3.9a1.6 1.6 0 00-2.8 0z"
+              stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+          </svg>
+          Threat response request
+        </div>
+        <h3 id="threatModalTitle">High threat detected</h3>
+        <div class="score" id="threatModalScore">93%</div>
+        <div class="meta" id="threatModalMeta">Source <strong>—</strong><br>Predicted threat <strong>—</strong><br>Model
+          <strong>—</strong></div>
+        <div class="actions"><button class="button-cap" id="threatModalIgnore" type="button">Ignore</button><button
+            class="block button-cap" id="threatModalBlock" type="button">Block IP</button></div>
+      </div>
+    </div>
+
+    <div class="main">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Logs</h2><span class="count" id="sourceCount">0 sources</span>
+        </div>
+        <div class="list-caption"><span>URL / name (IP)</span><span>Threat score</span></div>
+        <div class="source-list" id="sourceList"></div>
+      </section>
+
+      <div class="flow-arrow" aria-hidden="true"><span class="flow-arrow-chip"><svg viewBox="0 0 24 24" fill="none">
+            <path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" />
+          </svg></span></div>
+
+      <section class="panel detail-panel">
+        <div class="panel-head">
+          <h2>Details &amp; follow-up</h2><span class="count" id="logHeaderId">Select a log</span>
+        </div>
+        <div class="source-detail" id="sourceDetail" hidden></div>
+        <div class="flows-mini" id="flowsMini" hidden></div>
+        <div class="chat-wrap">
+          <div class="chat-log" id="chatLog">
+            <div class="chat-row bot">
+              <div class="bubble">Click a flagged source on the left to see its details and ask follow-up questions
+                here.</div>
+            </div>
+          </div>
+          <form class="chat-input-row" id="chatForm">
+            <input class="chat-input" id="chatInput" type="text" placeholder="Follow up questions…" autocomplete="off"
+              disabled>
+            <button class="chat-send" type="submit" id="chatSend" aria-label="Ask">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 12L20 4L13 20L11 13L4 12Z" fill="currentColor" />
+              </svg>
+            </button>
+          </form>
+        </div>
+      </section>
     </div>
   </div>
+  <script>
+    /* ============================================================
+       BACKEND CONTRACT — see dashboard.py
+    
+       GET  /api/stats                     -> { flows_analyzed, flows_analyzed_window,
+                                                  flagged, flagged_sources, avg_confidence, model }
+       GET  /api/groups                    -> [{ group_id, src_ip, host, request_count,
+                                                  label, confidence, last_seen }]
+       GET  /api/groups/<id>/logs          -> [{ id, timestamp, src_ip, dst_ip, dst_port,
+                                                  protocol, confidence, label,
+                                                  packets_per_sec, why[], features[] }]
+       GET  /api/groups/<id>/analysis      -> { lead, bullets[], label, confidence }
+       GET  /api/groups/<id>/chat/history  -> [{ sender: "user"|"bot", lead, bullets? }, ...]
+       POST /api/groups/<id>/chat          body: { message }
+                                            -> { lead, bullets? }
+       ============================================================ */
 
-  <div class="main">
-    <section class="panel">
-      <div class="panel-head"><h2>Logs</h2><span class="count" id="sourceCount">0 sources</span></div>
-      <div class="list-caption"><span>URL / name (IP)</span><span>Threat score</span></div>
-      <div class="source-list" id="sourceList"></div>
-    </section>
+    const LIVE_API = {{ live_api| tojson }};
+    let liveSocket = null;
+    let liveThreats = 0;
+    let latestThreatScore = 0;
+    let latestMlPrediction = null;
+    let lastPromptedScore = null;
+    let loadedModelsCount = 0;
+    const ignoredIps = new Set();
+    const RESPONSE_THRESHOLD = 92;
 
-    <div class="flow-arrow" aria-hidden="true"><span class="flow-arrow-chip"><svg viewBox="0 0 24 24" fill="none"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+    const ICONS = {
+      pulse: '<svg viewBox="0 0 24 24" fill="none"><path d="M3 12h4l2 7 4-14 2 7h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+      flag: '<svg viewBox="0 0 24 24" fill="none"><path d="M6 3v18M6 4h11l-2.5 4L17 12H6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+      percent: '<svg viewBox="0 0 24 24" fill="none"><circle cx="7" cy="7" r="2.6" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="17" r="2.6" stroke="currentColor" stroke-width="1.6"/><path d="M18 6L6 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+      target: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="0.9" fill="currentColor"/></svg>',
+      cpu: '<svg viewBox="0 0 24 24" fill="none"><rect x="7" y="7" width="10" height="10" rx="1.2" stroke="currentColor" stroke-width="1.6"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
+    };
 
-    <section class="panel detail-panel">
-      <div class="panel-head"><h2>Details &amp; follow-up</h2><span class="count" id="logHeaderId">Select a log</span></div>
-      <div class="source-detail" id="sourceDetail" hidden></div>
-      <div class="flows-mini" id="flowsMini" hidden></div>
-      <div class="chat-wrap">
-        <div class="chat-log" id="chatLog"><div class="chat-row bot"><div class="bubble">Click a flagged source on the left to see its details and ask follow-up questions here.</div></div></div>
-        <form class="chat-input-row" id="chatForm">
-          <input class="chat-input" id="chatInput" type="text" placeholder="Follow up questions…" autocomplete="off" disabled>
-          <button class="chat-send" type="submit" id="chatSend" aria-label="Ask">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12L20 4L13 20L11 13L4 12Z" fill="currentColor"/></svg>
-          </button>
-        </form>
-      </div>
-    </section>
-  </div>
-</div>
-<script>
-/* ============================================================
-   BACKEND CONTRACT — see dashboard.py
+    async function loadLiveStatus() {
+      try {
+        const res = await fetch(LIVE_API + '/api/live/status', { cache: 'no-store' });
+        if (!res.ok) throw new Error('Live status request failed');
+        const s = await res.json();
+        const running = !!s.running;
 
-   GET  /api/stats                     -> { flows_analyzed, flows_analyzed_window,
-                                              flagged, flagged_sources, avg_confidence, model }
-   GET  /api/groups                    -> [{ group_id, src_ip, host, request_count,
-                                              label, confidence, last_seen }]
-   GET  /api/groups/<id>/logs          -> [{ id, timestamp, src_ip, dst_ip, dst_port,
-                                              protocol, confidence, label,
-                                              packets_per_sec, why[], features[] }]
-   GET  /api/groups/<id>/analysis      -> { lead, bullets[], label, confidence }
-   GET  /api/groups/<id>/chat/history  -> [{ sender: "user"|"bot", lead, bullets? }, ...]
-   POST /api/groups/<id>/chat          body: { message }
-                                        -> { lead, bullets? }
-   ============================================================ */
+        document.getElementById('liveStatus').textContent = running ? 'LIVE' : 'OFFLINE';
+        document.querySelectorAll('.sensor-control').forEach(el => el.hidden = false);
+        document.getElementById('liveStart').disabled = running;
+        document.getElementById('liveStop').disabled = !running;
+        document.getElementById('interfaceSelect').disabled = false;
 
-const LIVE_API = {{ live_api|tojson }};
-let liveSocket = null;
-let liveThreats = 0;
-let latestThreatScore = 0;
-let latestMlPrediction = null;
-let lastPromptedScore = null;
-let loadedModelsCount = 0;
-const ignoredIps = new Set();
-const RESPONSE_THRESHOLD = 92;
+        if (s.interface) document.getElementById('interfaceSelect').value = s.interface;
+        const loaded = (s.models && s.models.loaded_models) || [];
+        loadedModelsCount = loaded.length;
+        const latest = (s.latest_ml) || {};
+        latestThreatScore = Number(latest.score || 0);
+        latestMlPrediction = latest.prediction || null;
+        if (latest.source_ip && latestMlPrediction) latestMlPrediction.src_ip = latest.source_ip;
+        updateResponsePanel();
+        const modelBadge = document.getElementById('modelBadge');
+        modelBadge.innerHTML = ICONS.pulse.replace('<svg ', '<svg class="icon" ') + (loaded.length
+          ? 'Unidirectional ML · ' + loaded.length + ' model' + (loaded.length === 1 ? '' : 's')
+          : 'Rules only · uni ML ready');
 
-const ICONS = {
-  pulse: '<svg viewBox="0 0 24 24" fill="none"><path d="M3 12h4l2 7 4-14 2 7h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  flag: '<svg viewBox="0 0 24 24" fill="none"><path d="M6 3v18M6 4h11l-2.5 4L17 12H6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  percent: '<svg viewBox="0 0 24 24" fill="none"><circle cx="7" cy="7" r="2.6" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="17" r="2.6" stroke="currentColor" stroke-width="1.6"/><path d="M18 6L6 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
-  target: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="0.9" fill="currentColor"/></svg>',
-  cpu: '<svg viewBox="0 0 24 24" fill="none"><rect x="7" y="7" width="10" height="10" rx="1.2" stroke="currentColor" stroke-width="1.6"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
-};
+        if (running) connectLiveSocket();
+        else if (liveSocket) { try { liveSocket.close(); } catch (e) { } liveSocket = null; }
+        return s;
+      } catch (e) {
+        document.getElementById('liveStatus').textContent = 'API OFFLINE';
+        document.querySelectorAll('.sensor-control').forEach(el => el.hidden = true);
+        if (liveSocket) { try { liveSocket.close(); } catch (err) { } liveSocket = null; }
+        return null;
+      }
+    }
 
-async function loadLiveStatus(){
-  try{
-    const res=await fetch(LIVE_API+'/api/live/status',{cache:'no-store'});
-    if(!res.ok) throw new Error('Live status request failed');
-    const s=await res.json();
-    const running=!!s.running;
+    let liveStatusPollTimer = null;
+    function startLiveStatusPolling() {
+      if (liveStatusPollTimer) clearInterval(liveStatusPollTimer);
+      liveStatusPollTimer = setInterval(loadLiveStatus, 2000);
+    }
 
-    document.getElementById('liveStatus').textContent=running?'LIVE':'OFFLINE';
-    document.querySelectorAll('.sensor-control').forEach(el=>el.hidden=false);
-    document.getElementById('liveStart').disabled=running;
-    document.getElementById('liveStop').disabled=!running;
-    document.getElementById('interfaceSelect').disabled=false;
+    async function loadInterfaces() {
+      try {
+        const s = await (await fetch(LIVE_API + '/api/live/status')).json();
+        const select = document.getElementById('interfaceSelect');
+        const current = select.value;
+        const details = (s.interface_details || []);
+        [...select.options].slice(1).forEach(o => o.remove());
+        details.forEach(i => {
+          const o = document.createElement('option');
+          o.value = i.name;
+          const state = i.usable ? 'READY' : (i.reason || 'UNAVAILABLE');
+          o.textContent = (i.display_name || i.name) + ' · ' + i.kind.toUpperCase() + ' · ' + state;
+          o.disabled = !i.usable;
+          select.appendChild(o);
+        });
+        if (current && details.some(i => i.name === current && i.usable)) select.value = current;
+        else { const ready = details.find(i => i.usable); if (ready) select.value = ready.name; }
+      } catch (e) { }
+    }
 
-    if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
-    const loaded=(s.models&&s.models.loaded_models)||[];
-    loadedModelsCount=loaded.length;
-    const latest=(s.latest_ml)||{};
-    latestThreatScore=Number(latest.score||0);
-    latestMlPrediction=latest.prediction||null;
-    if(latest.source_ip && latestMlPrediction) latestMlPrediction.src_ip=latest.source_ip;
-    updateResponsePanel();
-    const modelBadge=document.getElementById('modelBadge');
-    modelBadge.innerHTML = ICONS.pulse.replace('<svg ', '<svg class="icon" ') + (loaded.length
-      ? 'Unidirectional ML · '+loaded.length+' model'+(loaded.length===1?'':'s')
-      : 'Rules only · uni ML ready');
+    function connectLiveSocket() {
+      if (liveSocket && (liveSocket.readyState === WebSocket.OPEN || liveSocket.readyState === WebSocket.CONNECTING)) return;
+      const apiUrl = new URL(LIVE_API, window.location.origin); const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:'; liveSocket = new WebSocket(wsProtocol + '//' + apiUrl.host + '/ws/threats');
+      liveSocket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.event === 'live_threat') {
+            if (data.type === 'threat_score') {
+              if (data.prediction) latestMlPrediction = data.prediction;
+              else if (data.source_ip && latestMlPrediction) latestMlPrediction.src_ip = data.source_ip;
+              handleThreatScoreUpdate(data.score);
+              if (data.response_available && latestThreatScore !== lastPromptedScore) { lastPromptedScore = latestThreatScore; }
+              loadStats();
+            }
+            if (data.type === 'ml_prediction' && String(data.label || '').toLowerCase() !== 'benign') { latestMlPrediction = data; }
+            liveThreats++;
+            const badge = document.getElementById('sourceCount');
+            badge.textContent = badge.textContent.split(' ·')[0] + ' · ' + liveThreats + ' live';
+            loadStats(); loadGroups();
+          }
+          if (data.event === 'connected' && data.live) {
+            const running = !!data.live.running;
+            document.getElementById('liveStatus').textContent = running ? 'LIVE' : 'OFFLINE';
+            document.getElementById('liveStart').disabled = running;
+            document.getElementById('liveStop').disabled = !running;
+          }
+        } catch (e) { }
+      };
+      liveSocket.onclose = () => { liveSocket = null };
+    }
 
-    if(running) connectLiveSocket();
-    else if(liveSocket){ try{ liveSocket.close(); }catch(e){} liveSocket=null; }
-    return s;
-  }catch(e){
-    document.getElementById('liveStatus').textContent='API OFFLINE';
-    document.querySelectorAll('.sensor-control').forEach(el=>el.hidden=true);
-    if(liveSocket){ try{ liveSocket.close(); }catch(err){} liveSocket=null; }
-    return null;
-  }
-}
+    async function loadGeminiStatus() {
+      try {
+        const res = await fetch('/api/gemini/status', { cache: 'no-store' });
+        const data = await res.json();
+        window.__geminiReady = !!data.configured;
+      } catch (e) { window.__geminiReady = false; }
+    }
 
-let liveStatusPollTimer = null;
-function startLiveStatusPolling(){
-  if(liveStatusPollTimer) clearInterval(liveStatusPollTimer);
-  liveStatusPollTimer = setInterval(loadLiveStatus, 2000);
-}
-
-async function loadInterfaces(){
-  try{
-    const s=await (await fetch(LIVE_API+'/api/live/status')).json();
-    const select=document.getElementById('interfaceSelect');
-    const current=select.value;
-    const details=(s.interface_details||[]);
-    [...select.options].slice(1).forEach(o => o.remove());
-    details.forEach(i=>{
-      const o=document.createElement('option');
-      o.value=i.name;
-      const state=i.usable ? 'READY' : (i.reason || 'UNAVAILABLE');
-      o.textContent=(i.display_name||i.name)+' · '+i.kind.toUpperCase()+' · '+state;
-      o.disabled=!i.usable;
-      select.appendChild(o);
-    });
-    if(current && details.some(i=>i.name===current && i.usable)) select.value=current;
-    else { const ready=details.find(i=>i.usable); if(ready) select.value=ready.name; }
-  }catch(e){}
-}
-
-function connectLiveSocket(){
-  if(liveSocket && (liveSocket.readyState===WebSocket.OPEN || liveSocket.readyState===WebSocket.CONNECTING)) return;
-  const apiUrl=new URL(LIVE_API,window.location.origin); const wsProtocol=apiUrl.protocol==='https:'?'wss:':'ws:'; liveSocket=new WebSocket(wsProtocol+'//'+apiUrl.host+'/ws/threats');
-  liveSocket.onmessage=(event)=>{
-    try{
-      const data=JSON.parse(event.data);
-      if(data.event==='live_threat'){
-        if(data.type==='threat_score'){
-          if(data.prediction) latestMlPrediction=data.prediction;
-          else if(data.source_ip && latestMlPrediction) latestMlPrediction.src_ip=data.source_ip;
-          handleThreatScoreUpdate(data.score);
-          if(data.response_available && latestThreatScore!==lastPromptedScore){ lastPromptedScore=latestThreatScore; }
-          loadStats();
-        }
-        if(data.type==='ml_prediction' && String(data.label||'').toLowerCase()!=='benign'){ latestMlPrediction=data; }
-        liveThreats++;
-        const badge=document.getElementById('sourceCount');
-        badge.textContent=badge.textContent.split(' ·')[0]+' · '+liveThreats+' live';
+    async function startLive() {
+      const select = document.getElementById('interfaceSelect');
+      const iface = select.value;
+      if (!iface) { alert('Select a usable network interface first.'); return }
+      const option = select.options[select.selectedIndex];
+      if (option && option.disabled) { alert('This interface is not suitable for live capture. Refresh the interface list.'); return }
+      try {
+        const res = await fetch(LIVE_API + '/api/live/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ interface: iface }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Unable to start live monitoring');
+        await loadLiveStatus();
         loadStats(); loadGroups();
-      }
-      if(data.event==='connected' && data.live){
-        const running=!!data.live.running;
-        document.getElementById('liveStatus').textContent=running?'LIVE':'OFFLINE';
-        document.getElementById('liveStart').disabled=running;
-        document.getElementById('liveStop').disabled=!running;
-      }
-    }catch(e){}
-  };
-  liveSocket.onclose=()=>{liveSocket=null};
-}
+      } catch (e) { alert(e.message) }
+    }
 
-async function loadGeminiStatus(){
-  try{
-    const res=await fetch('/api/gemini/status',{cache:'no-store'});
-    const data=await res.json();
-    window.__geminiReady = !!data.configured;
-  }catch(e){ window.__geminiReady = false; }
-}
+    function currentThreatIp() {
+      return (latestMlPrediction && (latestMlPrediction.src_ip || latestMlPrediction.source_ip)) || null;
+    }
+    function updateResponsePanel() {
+      const panel = document.getElementById('responsePanel'); if (!panel) return;
+      const ip = currentThreatIp();
+      const eligible = latestThreatScore >= RESPONSE_THRESHOLD && !!ip && !ignoredIps.has(ip);
+      panel.hidden = !eligible;
+      if (!eligible) return;
+      const label = latestMlPrediction && latestMlPrediction.label ? latestMlPrediction.label : 'THREAT';
+      const model = latestMlPrediction && latestMlPrediction.model ? latestMlPrediction.model : 'UNIDIRECTIONAL ML';
+      document.getElementById('responseDetail').textContent = label + ' detected from ' + ip + ' · score ' + latestThreatScore.toFixed(0) + '%';
+      document.getElementById('responseMeta').textContent = model + ' · ' + RESPONSE_THRESHOLD + '% threshold · manual confirmation · no automatic blocking';
+    }
+    function showThreatModal() {
+      const modal = document.getElementById('threatModal');
+      const ip = currentThreatIp();
+      if (!modal || !ip || latestThreatScore < RESPONSE_THRESHOLD || ignoredIps.has(ip)) return;
+      const label = latestMlPrediction && latestMlPrediction.label ? latestMlPrediction.label : 'THREAT';
+      const model = latestMlPrediction && latestMlPrediction.model ? latestMlPrediction.model : 'UNIDIRECTIONAL ML';
+      document.getElementById('threatModalScore').textContent = latestThreatScore.toFixed(0) + '%';
+      document.getElementById('threatModalMeta').innerHTML = 'Source <strong>' + ip + '</strong><br>Predicted threat <strong>' + label + '</strong><br>Model <strong>' + model + '</strong><br>Manual confirmation required before blocking.';
+      modal.hidden = false;
+    }
+    function hideThreatModal() { const modal = document.getElementById('threatModal'); if (modal) modal.hidden = true; }
+    function handleThreatScoreUpdate(score) {
+      const old = latestThreatScore;
+      latestThreatScore = Number(score || 0);
+      updateResponsePanel();
+      if (latestThreatScore >= RESPONSE_THRESHOLD && old <= RESPONSE_THRESHOLD && currentThreatIp() && !ignoredIps.has(currentThreatIp())) { showThreatModal(); }
+    }
+    async function blockCurrentThreat() {
+      const ip = currentThreatIp(); if (!ip || latestThreatScore < RESPONSE_THRESHOLD) return;
+      const ok = window.confirm('Block source IP ' + ip + ' on this host?\n\nThreat score: ' + latestThreatScore.toFixed(0) + '%\nAction requires your confirmation.');
+      if (!ok) return;
+      try {
+        const res = await fetch(LIVE_API + '/api/live/response', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'block', ip }) });
+        const data = await res.json(); if (!res.ok) throw new Error(data.detail || 'Firewall action failed');
+        document.getElementById('responseDetail').textContent = ip + ' was blocked on this host.';
+        document.getElementById('responseMeta').textContent = 'Manual response completed.';
+        document.getElementById('responseBlock').disabled = true;
+      } catch (e) { window.alert('Response failed: ' + e.message); }
+    }
+    function ignoreCurrentThreat() {
+      const ip = currentThreatIp(); if (!ip) return;
+      ignoredIps.add(ip); document.getElementById('responsePanel').hidden = true;
+      document.getElementById('responseBlock').disabled = false; lastPromptedScore = null;
+    }
+    async function stopLive() {
+      const button = document.getElementById('liveStop');
+      button.disabled = true;
+      try {
+        const res = await fetch(LIVE_API + '/api/live/stop', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Unable to stop live monitoring');
+        await loadLiveStatus();
+        loadStats(); loadGroups();
+      } catch (e) { button.disabled = false; alert(e.message); }
+      finally { if (document.getElementById('liveStatus').textContent === 'OFFLINE') button.disabled = false; }
+    }
 
-async function startLive(){
-  const select=document.getElementById('interfaceSelect');
-  const iface=select.value;
-  if(!iface){alert('Select a usable network interface first.');return}
-  const option=select.options[select.selectedIndex];
-  if(option && option.disabled){alert('This interface is not suitable for live capture. Refresh the interface list.');return}
-  try{
-    const res=await fetch(LIVE_API+'/api/live/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interface:iface})});
-    const data=await res.json();
-    if(!res.ok) throw new Error(data.detail||'Unable to start live monitoring');
-    await loadLiveStatus();
-    loadStats(); loadGroups();
-  }catch(e){alert(e.message)}
-}
+    document.getElementById('liveStart').addEventListener('click', startLive);
+    document.getElementById('liveStop').addEventListener('click', stopLive);
+    document.getElementById('liveStop').disabled = true;
+    document.getElementById('responseBlock').addEventListener('click', blockCurrentThreat);
+    document.getElementById('responseIgnore').addEventListener('click', ignoreCurrentThreat);
+    document.getElementById('threatModalBlock').addEventListener('click', async () => { await blockCurrentThreat(); if (document.getElementById('responseBlock').disabled) hideThreatModal(); });
+    document.getElementById('threatModalIgnore').addEventListener('click', () => { ignoreCurrentThreat(); hideThreatModal(); });
+    document.getElementById('threatModal').addEventListener('click', (event) => { if (event.target.id === 'threatModal') hideThreatModal(); });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape') hideThreatModal(); });
 
-function currentThreatIp(){
-  return (latestMlPrediction && (latestMlPrediction.src_ip || latestMlPrediction.source_ip)) || null;
-}
-function updateResponsePanel(){
-  const panel=document.getElementById('responsePanel'); if(!panel) return;
-  const ip=currentThreatIp();
-  const eligible=latestThreatScore>=RESPONSE_THRESHOLD && !!ip && !ignoredIps.has(ip);
-  panel.hidden=!eligible;
-  if(!eligible) return;
-  const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
-  const model=latestMlPrediction&&latestMlPrediction.model?latestMlPrediction.model:'UNIDIRECTIONAL ML';
-  document.getElementById('responseDetail').textContent=label+' detected from '+ip+' · score '+latestThreatScore.toFixed(0)+'%';
-  document.getElementById('responseMeta').textContent=model+' · '+RESPONSE_THRESHOLD+'% threshold · manual confirmation · no automatic blocking';
-}
-function showThreatModal(){
-  const modal=document.getElementById('threatModal');
-  const ip=currentThreatIp();
-  if(!modal || !ip || latestThreatScore < RESPONSE_THRESHOLD || ignoredIps.has(ip)) return;
-  const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
-  const model=latestMlPrediction&&latestMlPrediction.model?latestMlPrediction.model:'UNIDIRECTIONAL ML';
-  document.getElementById('threatModalScore').textContent=latestThreatScore.toFixed(0)+'%';
-  document.getElementById('threatModalMeta').innerHTML='Source <strong>'+ip+'</strong><br>Predicted threat <strong>'+label+'</strong><br>Model <strong>'+model+'</strong><br>Manual confirmation required before blocking.';
-  modal.hidden=false;
-}
-function hideThreatModal(){ const modal=document.getElementById('threatModal'); if(modal) modal.hidden=true; }
-function handleThreatScoreUpdate(score){
-  const old=latestThreatScore;
-  latestThreatScore=Number(score||0);
-  updateResponsePanel();
-  if(latestThreatScore >= RESPONSE_THRESHOLD && old <= RESPONSE_THRESHOLD && currentThreatIp() && !ignoredIps.has(currentThreatIp())){ showThreatModal(); }
-}
-async function blockCurrentThreat(){
-  const ip=currentThreatIp(); if(!ip || latestThreatScore<RESPONSE_THRESHOLD) return;
-  const ok=window.confirm('Block source IP '+ip+' on this host?\n\nThreat score: '+latestThreatScore.toFixed(0)+'%\nAction requires your confirmation.');
-  if(!ok) return;
-  try{
-    const res=await fetch(LIVE_API+'/api/live/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'block',ip})});
-    const data=await res.json(); if(!res.ok) throw new Error(data.detail||'Firewall action failed');
-    document.getElementById('responseDetail').textContent=ip+' was blocked on this host.';
-    document.getElementById('responseMeta').textContent='Manual response completed.';
-    document.getElementById('responseBlock').disabled=true;
-  }catch(e){window.alert('Response failed: '+e.message);}
-}
-function ignoreCurrentThreat(){
-  const ip=currentThreatIp(); if(!ip) return;
-  ignoredIps.add(ip); document.getElementById('responsePanel').hidden=true;
-  document.getElementById('responseBlock').disabled=false; lastPromptedScore=null;
-}
-async function stopLive(){
-  const button=document.getElementById('liveStop');
-  button.disabled=true;
-  try{
-    const res=await fetch(LIVE_API+'/api/live/stop',{method:'POST'});
-    const data=await res.json();
-    if(!res.ok) throw new Error(data.detail||'Unable to stop live monitoring');
-    await loadLiveStatus();
-    loadStats(); loadGroups();
-  }catch(e){ button.disabled=false; alert(e.message); }
-  finally{ if(document.getElementById('liveStatus').textContent==='OFFLINE') button.disabled=false; }
-}
+    let selectedGroup = null;
+    let groups = [];
 
-document.getElementById('liveStart').addEventListener('click',startLive);
-document.getElementById('liveStop').addEventListener('click',stopLive);
-document.getElementById('liveStop').disabled=true;
-document.getElementById('responseBlock').addEventListener('click',blockCurrentThreat);
-document.getElementById('responseIgnore').addEventListener('click',ignoreCurrentThreat);
-document.getElementById('threatModalBlock').addEventListener('click',async()=>{ await blockCurrentThreat(); if(document.getElementById('responseBlock').disabled) hideThreatModal(); });
-document.getElementById('threatModalIgnore').addEventListener('click',()=>{ ignoreCurrentThreat(); hideThreatModal(); });
-document.getElementById('threatModal').addEventListener('click',(event)=>{ if(event.target.id==='threatModal') hideThreatModal(); });
-document.addEventListener('keydown',(event)=>{ if(event.key==='Escape') hideThreatModal(); });
+    function fmtConf(c) { if (c == null) return '—'; return (c * 100).toFixed(0) + '%'; }
+    function fmtPort(p) { return p != null ? p : '—'; }
 
-let selectedGroup = null;
-let groups = [];
-
-function fmtConf(c){ if(c == null) return '—'; return (c*100).toFixed(0)+'%'; }
-function fmtPort(p){ return p != null ? p : '—'; }
-
-async function loadStats(){
-  try{
-    const res=await fetch('/api/stats');
-    const s=await res.json();
-    const total=s.flows_analyzed||0;
-    const flagPct=total>0?((s.flagged/total)*100).toFixed(1):'0.0';
-    const strip=[
-      {icon:ICONS.pulse,label:'Flows analyzed',value:total.toLocaleString(),sub:s.flows_analyzed_window||'Live flow count',cls:''},
-      {icon:ICONS.flag,label:'Flagged sources',value:s.flagged||0,sub:(s.flagged_sources||0)+' sources · '+flagPct+'% of flows',cls:'flag'},
-      {icon:ICONS.percent,label:'Avg confidence',value:fmtConf(s.avg_confidence),sub:'On flagged flows',cls:''},
-      {icon:ICONS.target,label:'Live threat score',value:latestThreatScore.toFixed(0)+'%',sub:latestMlPrediction?(latestMlPrediction.label||'THREAT')+' · strongest model confidence':'Waiting for ML inference',cls:latestThreatScore>=RESPONSE_THRESHOLD?'flag':''},
-      {icon:ICONS.cpu,label:'Active model',value:loadedModelsCount?('Unidirectional ML · '+loadedModelsCount+' model'+(loadedModelsCount===1?'':'s')):'Rules only',sub:'Live detection pipeline',cls:'model'}
-    ];
-    document.getElementById('statStrip').innerHTML=strip.map(item=>`
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stats');
+        const s = await res.json();
+        const total = s.flows_analyzed || 0;
+        const flagPct = total > 0 ? ((s.flagged / total) * 100).toFixed(1) : '0.0';
+        const strip = [
+          { icon: ICONS.pulse, label: 'Flows analyzed', value: total.toLocaleString(), sub: s.flows_analyzed_window || 'Live flow count', cls: '' },
+          { icon: ICONS.flag, label: 'Flagged sources', value: s.flagged || 0, sub: (s.flagged_sources || 0) + ' sources · ' + flagPct + '% of flows', cls: 'flag' },
+          { icon: ICONS.percent, label: 'Avg confidence', value: fmtConf(s.avg_confidence), sub: 'On flagged flows', cls: '' },
+          { icon: ICONS.target, label: 'Live threat score', value: latestThreatScore.toFixed(0) + '%', sub: latestMlPrediction ? (latestMlPrediction.label || 'THREAT') + ' · strongest model confidence' : 'Waiting for ML inference', cls: latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : '' },
+          { icon: ICONS.cpu, label: 'Active model', value: loadedModelsCount ? ('Unidirectional ML · ' + loadedModelsCount + ' model' + (loadedModelsCount === 1 ? '' : 's')) : 'Rules only', sub: 'Live detection pipeline', cls: 'model' }
+        ];
+        document.getElementById('statStrip').innerHTML = strip.map(item => `
       <div class="stat ${item.cls}">
         <div class="stat-icon-wrap">${item.icon}</div>
         <div class="label">${item.label}</div>
         <div class="value">${item.value}</div>
         <div class="sub">${item.sub}</div>
       </div>`).join('');
-  }catch(e){console.error('[Dashboard] Failed to load stats:',e);}
-}
+      } catch (e) { console.error('[Dashboard] Failed to load stats:', e); }
+    }
 
-async function loadGroups(){
-  try{
-    const res = await fetch('/api/groups');
-    const data = await res.json();
-    groups = Array.isArray(data) ? data : [];
-    renderGroups();
-  }catch(e){ console.error('[Dashboard] Failed to load groups:', e); }
-}
+    async function loadGroups() {
+      try {
+        const res = await fetch('/api/groups');
+        const data = await res.json();
+        groups = Array.isArray(data) ? data : [];
+        renderGroups();
+      } catch (e) { console.error('[Dashboard] Failed to load groups:', e); }
+    }
 
-function renderGroups(){
-  const flaggedGroups = groups.filter(g => Number(g.threat_score||0) > 0);
-  document.getElementById('sourceCount').textContent = flaggedGroups.length + ' sources';
-  const list = document.getElementById('sourceList');
-  if(flaggedGroups.length === 0){
-    list.innerHTML = '<div class="empty">No flagged sources yet. Sources will appear here automatically when threat evidence is detected.</div>';
-    return;
-  }
-  list.innerHTML = flaggedGroups.map(g => {
-    const score = Number(g.threat_score||0);
-    const sevClass = score >= 90 ? 'severity-high' : '';
-    return `
-    <div class="source-row ${sevClass} ${g.group_id===selectedGroup?'active':''}" data-id="${g.group_id}" tabindex="0" role="button">
+    function renderGroups() {
+      const flaggedGroups = groups.filter(g => Number(g.threat_score || 0) > 0);
+      document.getElementById('sourceCount').textContent = flaggedGroups.length + ' sources';
+      const list = document.getElementById('sourceList');
+      if (flaggedGroups.length === 0) {
+        list.innerHTML = '<div class="empty">No flagged sources yet. Sources will appear here automatically when threat evidence is detected.</div>';
+        return;
+      }
+      list.innerHTML = flaggedGroups.map(g => {
+        const score = Number(g.threat_score || 0);
+        const sevClass = score >= 90 ? 'severity-high' : '';
+        return `
+    <div class="source-row ${sevClass} ${g.group_id === selectedGroup ? 'active' : ''}" data-id="${g.group_id}" tabindex="0" role="button">
       <div class="sev" style="background:${score >= 90 ? 'var(--sev-high)' : score >= 70 ? 'var(--sev-mid)' : 'var(--sev-low)'}"></div>
       <div class="who">
         <div class="primary">${g.src_ip || g.host || 'Unknown source'}</div>
@@ -548,166 +1518,167 @@ function renderGroups(){
       </div>
       <div class="conf"><span class="score-value">${score.toFixed(0)}%</span></div>
     </div>`;
-  }).join('');
-  list.querySelectorAll('.source-row').forEach(row => {
-    row.addEventListener('click', () => selectGroup(row.dataset.id));
-    row.addEventListener('keydown', (e) => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); selectGroup(row.dataset.id); } });
-  });
-}
+      }).join('');
+      list.querySelectorAll('.source-row').forEach(row => {
+        row.addEventListener('click', () => selectGroup(row.dataset.id));
+        row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectGroup(row.dataset.id); } });
+      });
+    }
 
-async function selectGroup(id){
-  selectedGroup = id;
-  renderGroups();
-  document.getElementById('logHeaderId').textContent = id;
+    async function selectGroup(id) {
+      selectedGroup = id;
+      renderGroups();
+      document.getElementById('logHeaderId').textContent = id;
 
-  document.getElementById('sourceDetail').hidden = false;
-  document.getElementById('sourceDetail').innerHTML = '<div class="empty" style="padding:20px">Loading source detail…</div>';
-  document.getElementById('flowsMini').hidden = false;
-  document.getElementById('flowsMini').innerHTML = '<div class="empty">Loading flows…</div>';
-  const [logsRes, analysisRes, historyRes] = await Promise.all([
-    fetch(`/api/groups/${encodeURIComponent(id)}/logs`),
-    fetch(`/api/groups/${encodeURIComponent(id)}/analysis`),
-    fetch(`/api/groups/${encodeURIComponent(id)}/chat/history`)
-  ]);
-  const logs = await logsRes.json();
-  const analysis = await analysisRes.json();
-  const history = await historyRes.json();
+      document.getElementById('sourceDetail').hidden = false;
+      document.getElementById('sourceDetail').innerHTML = '<div class="empty" style="padding:20px">Loading source detail…</div>';
+      document.getElementById('flowsMini').hidden = false;
+      document.getElementById('flowsMini').innerHTML = '<div class="empty">Loading flows…</div>';
+      const [logsRes, analysisRes, historyRes] = await Promise.all([
+        fetch(`/api/groups/${encodeURIComponent(id)}/logs`),
+        fetch(`/api/groups/${encodeURIComponent(id)}/analysis`),
+        fetch(`/api/groups/${encodeURIComponent(id)}/chat/history`)
+      ]);
+      const logs = await logsRes.json();
+      const analysis = await analysisRes.json();
+      const history = await historyRes.json();
 
-  renderSourceDetail(id, analysis, Array.isArray(logs) ? logs : []);
-  renderFlowsMini(Array.isArray(logs) ? logs : []);
-  resetChat(analysis, history);
+      renderSourceDetail(id, analysis, Array.isArray(logs) ? logs : []);
+      renderFlowsMini(Array.isArray(logs) ? logs : []);
+      resetChat(analysis, history);
 
-  const input = document.getElementById('chatInput');
-  const send = document.getElementById('chatSend');
-  input.disabled = false;
-  send.disabled = false;
-  input.placeholder = `Ask about ${id}…`;
-}
+      const input = document.getElementById('chatInput');
+      const send = document.getElementById('chatSend');
+      input.disabled = false;
+      send.disabled = false;
+      input.placeholder = `Ask about ${id}…`;
+    }
 
-function renderSourceDetail(id, analysis, logs){
-  const detail=document.getElementById('sourceDetail');
-  if(!analysis || analysis.error){ detail.innerHTML='<div class="empty">Unable to load source analysis.</div>'; return; }
-  const score=Number(analysis.threat_score||0);
-  const flagged=Number(analysis.flagged_flows||0);
-  const total=Number(analysis.total_flows||logs.length||0);
-  const reasons=(analysis.bullets||[]).slice(0,5);
-  detail.innerHTML=`
-    <div class="detail-title"><div><div class="ip">${id} <span class="detail-verdict">${score.toFixed(0)}%</span></div><div class="secondary">${analysis.label||'SUSPICIOUS'} · source-level analysis</div></div></div>
+    function renderSourceDetail(id, analysis, logs) {
+      const detail = document.getElementById('sourceDetail');
+      if (!analysis || analysis.error) { detail.innerHTML = '<div class="empty">Unable to load source analysis.</div>'; return; }
+      const score = Number(analysis.threat_score || 0);
+      const flagged = Number(analysis.flagged_flows || 0);
+      const total = Number(analysis.total_flows || logs.length || 0);
+      const reasons = (analysis.bullets || []).slice(0, 5);
+      detail.innerHTML = `
+    <div class="detail-title"><div><div class="ip">${id} <span class="detail-verdict">${score.toFixed(0)}%</span></div><div class="secondary">${analysis.label || 'SUSPICIOUS'} · source-level analysis</div></div></div>
     <div class="detail-grid">
       <div class="detail-metric"><div class="k">Total flows</div><div class="v">${total}</div></div>
       <div class="detail-metric"><div class="k">Flagged flows</div><div class="v">${flagged}</div></div>
-      <div class="detail-metric"><div class="k">Protocol</div><div class="v">${analysis.protocol||'TCP'}</div></div>
-      <div class="detail-metric"><div class="k">Top ports</div><div class="v">${(analysis.top_ports||[]).slice(0,5).join(', ')||'—'}</div></div>
-      <div class="detail-metric"><div class="k">First seen</div><div class="v">${analysis.first_seen||'—'}</div></div>
-      <div class="detail-metric"><div class="k">Last seen</div><div class="v">${analysis.last_seen||'—'}</div></div>
+      <div class="detail-metric"><div class="k">Protocol</div><div class="v">${analysis.protocol || 'TCP'}</div></div>
+      <div class="detail-metric"><div class="k">Top ports</div><div class="v">${(analysis.top_ports || []).slice(0, 5).join(', ') || '—'}</div></div>
+      <div class="detail-metric"><div class="k">First seen</div><div class="v">${analysis.first_seen || '—'}</div></div>
+      <div class="detail-metric"><div class="k">Last seen</div><div class="v">${analysis.last_seen || '—'}</div></div>
     </div>
-    <div class="detail-reasons"><strong>${ICONS.target.replace('<svg ', '<svg class="icon" ')}Why flagged?</strong>${reasons.length?reasons.map(x=>'• '+x).join('<br>'):'• Suspicious traffic evidence detected.'}<br>• ML model confidence: ${fmtConf(analysis.confidence)}</div>
+    <div class="detail-reasons"><strong>${ICONS.target.replace('<svg ', '<svg class="icon" ')}Why flagged?</strong>${reasons.length ? reasons.map(x => '• ' + x).join('<br>') : '• Suspicious traffic evidence detected.'}<br>• ML model confidence: ${fmtConf(analysis.confidence)}</div>
   `;
-}
+    }
 
-function renderFlowsMini(logs){
-  const wrap=document.getElementById('flowsMini');
-  if(!logs.length){ wrap.innerHTML='<div class="empty">No logged flows for this source.</div>'; return; }
-  wrap.innerHTML=`<div class="flows-mini-head"><span>Time</span><span>Destination</span><span>Port</span><span>Verdict</span></div>${logs.slice(0,25).map(l=>{
-    const flagged=l.label && l.label!=='BENIGN';
-    return `<div class="flows-mini-row"><span>${l.timestamp||'—'}</span><span class="path">${l.dst_ip||'—'}</span><span>${fmtPort(l.dst_port)}</span><span class="lbl ${flagged?'ddos':'benign'}">${l.label||'BENIGN'}</span></div>`;
-  }).join('')}`;
-}
+    function renderFlowsMini(logs) {
+      const wrap = document.getElementById('flowsMini');
+      if (!logs.length) { wrap.innerHTML = '<div class="empty">No logged flows for this source.</div>'; return; }
+      wrap.innerHTML = `<div class="flows-mini-head"><span>Time</span><span>Destination</span><span>Port</span><span>Verdict</span></div>${logs.slice(0, 25).map(l => {
+        const flagged = l.label && l.label !== 'BENIGN';
+        return `<div class="flows-mini-row"><span>${l.timestamp || '—'}</span><span class="path">${l.dst_ip || '—'}</span><span>${fmtPort(l.dst_port)}</span><span class="lbl ${flagged ? 'ddos' : 'benign'}">${l.label || 'BENIGN'}</span></div>`;
+      }).join('')}`;
+    }
 
-function resetChat(analysis, history){
-  const log = document.getElementById('chatLog');
-  log.innerHTML = '';
-  if(analysis && !analysis.error){ addChatRow({ lead: analysis.lead, bullets: analysis.bullets, verdict: analysis.label }, false); }
-  if(Array.isArray(history)){ history.forEach(turn => { addChatRow({ lead: turn.lead, bullets: turn.bullets }, turn.sender === 'user'); }); }
-}
+    function resetChat(analysis, history) {
+      const log = document.getElementById('chatLog');
+      log.innerHTML = '';
+      if (analysis && !analysis.error) { addChatRow({ lead: analysis.lead, bullets: analysis.bullets, verdict: analysis.label }, false); }
+      if (Array.isArray(history)) { history.forEach(turn => { addChatRow({ lead: turn.lead, bullets: turn.bullets }, turn.sender === 'user'); }); }
+    }
 
-function addChatRow(payload, isUser){
-  const log = document.getElementById('chatLog');
-  const row = document.createElement('div');
-  row.className = 'chat-row ' + (isUser ? 'user' : 'bot');
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  const lbl = payload.verdict || '';
-  const isThreat = lbl && lbl !== 'BENIGN';
-  const verdictHtml = lbl ? `<div class="verdict ${isThreat?'ddos':'benign'}">${lbl}</div><br>` : '';
-  const bulletsHtml = (payload.bullets && payload.bullets.length) ? `<ul>${payload.bullets.map(b => `<li>${b}</li>`).join('')}</ul>` : '';
-  bubble.innerHTML = verdictHtml + `<div class="lead">${payload.lead}</div>` + bulletsHtml;
-  row.appendChild(bubble);
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
-  return row;
-}
+    function addChatRow(payload, isUser) {
+      const log = document.getElementById('chatLog');
+      const row = document.createElement('div');
+      row.className = 'chat-row ' + (isUser ? 'user' : 'bot');
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      const lbl = payload.verdict || '';
+      const isThreat = lbl && lbl !== 'BENIGN';
+      const verdictHtml = lbl ? `<div class="verdict ${isThreat ? 'ddos' : 'benign'}">${lbl}</div><br>` : '';
+      const bulletsHtml = (payload.bullets && payload.bullets.length) ? `<ul>${payload.bullets.map(b => `<li>${b}</li>`).join('')}</ul>` : '';
+      bubble.innerHTML = verdictHtml + `<div class="lead">${payload.lead}</div>` + bulletsHtml;
+      row.appendChild(bubble);
+      log.appendChild(row);
+      log.scrollTop = log.scrollHeight;
+      return row;
+    }
 
-function addTypingBubble(){
-  const log = document.getElementById('chatLog');
-  const row = document.createElement('div');
-  row.className = 'chat-row bot typing';
-  row.innerHTML = `<div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
-  return row;
-}
+    function addTypingBubble() {
+      const log = document.getElementById('chatLog');
+      const row = document.createElement('div');
+      row.className = 'chat-row bot typing';
+      row.innerHTML = `<div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+      log.appendChild(row);
+      log.scrollTop = log.scrollHeight;
+      return row;
+    }
 
-async function askQuestion(q){
-  addChatRow({ lead: q }, true);
-  const typingRow = addTypingBubble();
-  const input = document.getElementById('chatInput');
-  const send = document.getElementById('chatSend');
-  input.disabled = true; send.disabled = true;
-  try{
-    const res = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: q }) });
-    const data = await res.json();
-    typingRow.remove();
-    addChatRow(data, false);
-  }catch(e){ typingRow.remove(); addChatRow({ lead: "Couldn't reach the analysis backend — try again in a moment." }, false); }
-  finally{ input.disabled = false; send.disabled = false; input.focus(); }
-}
+    async function askQuestion(q) {
+      addChatRow({ lead: q }, true);
+      const typingRow = addTypingBubble();
+      const input = document.getElementById('chatInput');
+      const send = document.getElementById('chatSend');
+      input.disabled = true; send.disabled = true;
+      try {
+        const res = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: q }) });
+        const data = await res.json();
+        typingRow.remove();
+        addChatRow(data, false);
+      } catch (e) { typingRow.remove(); addChatRow({ lead: "Couldn't reach the analysis backend — try again in a moment." }, false); }
+      finally { input.disabled = false; send.disabled = false; input.focus(); }
+    }
 
-document.getElementById('chatForm').addEventListener('submit', (e) => {
-  e.preventDefault();
-  if(!selectedGroup) return;
-  const input = document.getElementById('chatInput');
-  const q = input.value.trim();
-  if(!q) return;
-  askQuestion(q);
-  input.value = '';
-});
+    document.getElementById('chatForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!selectedGroup) return;
+      const input = document.getElementById('chatInput');
+      const q = input.value.trim();
+      if (!q) return;
+      askQuestion(q);
+      input.value = '';
+    });
 
-const SUN_ICON='<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" fill="currentColor"/>';
-const MOON_ICON='<circle cx="12" cy="12" r="5" fill="currentColor"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>';
-function applyTheme(mode){
-  const light=mode==='light';
-  document.body.classList.toggle('light-mode', light);
-  document.documentElement.style.colorScheme = light ? 'light' : 'dark';
-  document.getElementById('themeIcon').innerHTML = light ? MOON_ICON : SUN_ICON;
-  document.getElementById('themeLabel').textContent = light ? 'Dark' : 'Light';
-  document.getElementById('themeToggle').setAttribute('aria-label', light?'Switch to dark mode':'Switch to light mode');
-}
-function initTheme(){ applyTheme(localStorage.getItem('sentry-theme') || 'dark'); }
-document.getElementById('themeToggle').addEventListener('click',()=>{
-  const next=document.getElementById('themeLabel').textContent==='Dark'?'light':'dark';
-  localStorage.setItem('sentry-theme',next);
-  applyTheme(next);
-});
+    const SUN_ICON = '<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" fill="currentColor"/>';
+    const MOON_ICON = '<circle cx="12" cy="12" r="5" fill="currentColor"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>';
+    function applyTheme(mode) {
+      const light = mode === 'light';
+      document.body.classList.toggle('light-mode', light);
+      document.documentElement.style.colorScheme = light ? 'light' : 'dark';
+      document.getElementById('themeIcon').innerHTML = light ? MOON_ICON : SUN_ICON;
+      document.getElementById('themeLabel').textContent = light ? 'Dark' : 'Light';
+      document.getElementById('themeToggle').setAttribute('aria-label', light ? 'Switch to dark mode' : 'Switch to light mode');
+    }
+    function initTheme() { applyTheme(localStorage.getItem('sentry-theme') || 'dark'); }
+    document.getElementById('themeToggle').addEventListener('click', () => {
+      const next = document.getElementById('themeLabel').textContent === 'Dark' ? 'light' : 'dark';
+      localStorage.setItem('sentry-theme', next);
+      applyTheme(next);
+    });
 
-initTheme();
-loadInterfaces();
-loadLiveStatus();
-loadGeminiStatus();
-startLiveStatusPolling();
-loadStats();
-loadGroups();
+    initTheme();
+    loadInterfaces();
+    loadLiveStatus();
+    loadGeminiStatus();
+    startLiveStatusPolling();
+    loadStats();
+    loadGroups();
 
-setInterval(async () => {
-  await loadStats();
-  await loadGroups();
-  if(selectedGroup){
-    try{
-      const logsRes = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/logs`);
-      if(logsRes.ok){ const logs = await logsRes.json(); renderFlowsMini(Array.isArray(logs) ? logs : []); }
-    }catch(e){}
-  }
-}, 5000);
-</script>
+    setInterval(async () => {
+      await loadStats();
+      await loadGroups();
+      if (selectedGroup) {
+        try {
+          const logsRes = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/logs`);
+          if (logsRes.ok) { const logs = await logsRes.json(); renderFlowsMini(Array.isArray(logs) ? logs : []); }
+        } catch (e) { }
+      }
+    }, 5000);
+  </script>
 </body>
+
 </html>
