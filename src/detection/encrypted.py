@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pandas as pd
+
 
 def read_zeek_log(log_file):
     log_file = Path(log_file)
@@ -31,6 +33,38 @@ def read_zeek_log(log_file):
         raise ValueError(f"Could not find #fields header in Zeek log: {log_file}")
 
     return fields, rows
+
+
+def detect_encrypted_live(flows):
+    """Identify observed TLS/QUIC-like flows for first-stage screening."""
+    if flows is None or flows.empty:
+        return []
+    if "proto" not in flows.columns or "id.resp_p" not in flows.columns:
+        return []
+
+    ports = pd.to_numeric(flows["id.resp_p"], errors="coerce")
+    protocols = flows["proto"].astype(str).str.lower()
+    results = []
+    for index, row in flows.iterrows():
+        port = ports.loc[index]
+        proto = protocols.loc[index]
+        if proto == "tcp" and port == 443:
+            results.append({
+                "type": "observed_tls",
+                "src_ip": row.get("id.orig_h", "unknown"),
+                "dst_ip": row.get("id.resp_h", "unknown"),
+                "dst_port": 443,
+                "severity": "info",
+            })
+        elif proto == "udp" and port == 443:
+            results.append({
+                "type": "observed_quic",
+                "src_ip": row.get("id.orig_h", "unknown"),
+                "dst_ip": row.get("id.resp_h", "unknown"),
+                "dst_port": 443,
+                "severity": "info",
+            })
+    return results
 
 
 def detect_encrypted_traffic(ssl_file, quic_file):
