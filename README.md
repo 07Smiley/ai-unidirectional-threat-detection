@@ -181,7 +181,7 @@ backend/              FastAPI backend and live service
 src/zeek/             Zeek lifecycle and installation helpers
 src/ingest/            PCAP and live Zeek readers
 src/features/          Network feature extraction
-src/detection/         Rules and live detection pipeline
+src/detection/         Rules, first-stage flagging, and live detection pipeline
 src/models/            ML training and runtime inference
 dashboard.py           Flask dashboard
 templates/             Dashboard UI
