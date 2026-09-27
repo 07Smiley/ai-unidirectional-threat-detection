@@ -28,6 +28,11 @@ class LiveThreatDetector:
     def row_count(self) -> int:
         return self._row_count
 
+    def reset(self) -> None:
+        """Clear rolling live detection history."""
+        self._history.clear()
+        self._row_count = 0
+
     def _append(self, batch: pd.DataFrame) -> None:
         if batch is None or batch.empty:
             return
