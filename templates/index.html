@@ -161,7 +161,23 @@
   .response-copy{min-width:0}.response-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.9px}
   .response-detail{font-size:12px;color:var(--on-primary-mute);margin-top:4px}.response-meta{font-size:11px;color:var(--ink-mute);margin-top:3px}
   .response-actions{display:flex;gap:8px;flex-shrink:0}.response-btn{background:var(--on-primary);color:var(--ink);border:1px solid var(--on-primary);border-radius:var(--rounded-pill);padding:9px 14px;font:700 11px 'D-DIN',Arial,sans-serif;text-transform:uppercase;letter-spacing:.6px;cursor:pointer}.response-btn.secondary{background:transparent;color:var(--on-primary)}.response-btn:disabled{opacity:.35;cursor:not-allowed}
-  @media(max-width:700px){.response-panel{align-items:flex-start;flex-direction:column}.response-actions{width:100%}.response-btn{flex:1}}
+  .threat-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999;backdrop-filter:blur(6px)}
+  .threat-modal-backdrop[hidden]{display:none!important}
+  .threat-modal{width:min(560px,100%);background:#0b0d10;border:1px solid #ef4444;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.55);padding:24px;color:#fff}
+  .threat-modal .kicker{font-size:11px;font-weight:800;letter-spacing:1px;color:#ff6b6b;text-transform:uppercase}
+  .threat-modal h3{font-size:24px;margin:6px 0 10px}
+  .threat-modal .score{font-size:42px;font-weight:900;color:#ff4d5a;margin:4px 0 12px}
+  .threat-modal .meta{font-size:13px;color:#c7cbd1;line-height:1.55}
+  .threat-modal .meta strong{color:#fff}
+  .threat-modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+  .threat-modal .actions button{border-radius:999px;padding:10px 16px;font:800 11px 'D-DIN',Arial,sans-serif;text-transform:uppercase;letter-spacing:.7px;cursor:pointer}
+  .threat-modal .block{background:#ef4444;color:#fff;border:1px solid #ef4444}
+  .threat-modal .ignore{background:transparent;color:#fff;border:1px solid #4b5563}
+  body.light-mode .threat-modal{background:#fff;color:#000;border-color:#000;box-shadow:0 24px 80px rgba(0,0,0,.22)}
+  body.light-mode .threat-modal .meta{color:#444}
+  body.light-mode .threat-modal .meta strong{color:#000}
+  body.light-mode .threat-modal .ignore{color:#000;border-color:#888}
+  @media(max-width:700px){.response-panel{align-items:flex-start;flex-direction:column}.response-actions{width:100%}.response-btn{flex:1}.threat-modal h3{font-size:21px}.threat-modal .score{font-size:36px}}
 
   .main{ display:grid; grid-template-columns:1fr 1.4fr; gap:var(--sp-xl); align-items:start; }
   @media (max-width: 980px){ .main{ grid-template-columns:1fr; } }
@@ -338,6 +354,19 @@
     </div>
   </section>
 
+  <div class="threat-modal-backdrop" id="threatModal" hidden>
+    <div class="threat-modal" role="dialog" aria-modal="true" aria-labelledby="threatModalTitle">
+      <div class="kicker">Threat response request</div>
+      <h3 id="threatModalTitle">High threat detected</h3>
+      <div class="score" id="threatModalScore">93%</div>
+      <div class="meta" id="threatModalMeta">Source <strong>—</strong><br>Predicted threat <strong>—</strong><br>Model <strong>—</strong></div>
+      <div class="actions">
+        <button class="ignore" id="threatModalIgnore" type="button">Ignore</button>
+        <button class="block" id="threatModalBlock" type="button">Block IP</button>
+      </div>
+    </div>
+  </div>
+
   <div class="main">
     <section class="panel">
       <div class="panel-head">
@@ -499,10 +528,9 @@ function connectLiveSocket(){
       const data=JSON.parse(event.data);
       if(data.event==='live_threat'){
         if(data.type==='threat_score'){
-          latestThreatScore=Number(data.score||0);
           if(data.prediction) latestMlPrediction=data.prediction;
           else if(data.source_ip && latestMlPrediction) latestMlPrediction.src_ip=data.source_ip;
-          updateResponsePanel();
+          handleThreatScoreUpdate(data.score);
           if(data.response_available && latestThreatScore!==lastPromptedScore){
             lastPromptedScore=latestThreatScore;
           }
@@ -558,12 +586,40 @@ function updateResponsePanel(){
   const panel=document.getElementById('responsePanel'); if(!panel) return;
   const ip=currentThreatIp();
   const eligible=latestThreatScore>=RESPONSE_THRESHOLD && !!ip && !ignoredIps.has(ip);
-  panel.hidden=!eligible; if(!eligible) return;
+  panel.hidden=!eligible;
+  if(!eligible) return;
   const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
-  document.getElementById('responseTitle').textContent='THREAT RESPONSE AVAILABLE';
   const model=latestMlPrediction&&latestMlPrediction.model?latestMlPrediction.model:'UNIDIRECTIONAL ML';
+  document.getElementById('responseTitle').textContent='THREAT RESPONSE AVAILABLE';
   document.getElementById('responseDetail').textContent=label+' detected from '+ip+' · score '+latestThreatScore.toFixed(0)+'%';
   document.getElementById('responseMeta').textContent=model+' · '+RESPONSE_THRESHOLD+'% threshold · manual confirmation · no automatic blocking';
+}
+function showThreatModal(){
+  const modal=document.getElementById('threatModal');
+  const ip=currentThreatIp();
+  if(!modal || !ip || latestThreatScore < RESPONSE_THRESHOLD || ignoredIps.has(ip)) return;
+  const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
+  const model=latestMlPrediction&&latestMlPrediction.model?latestMlPrediction.model:'UNIDIRECTIONAL ML';
+  document.getElementById('threatModalScore').textContent=latestThreatScore.toFixed(0)+'%';
+  document.getElementById('threatModalMeta').innerHTML='Source <strong>'+ip+'</strong><br>Predicted threat <strong>'+label+'</strong><br>Model <strong>'+model+'</strong><br>Manual confirmation required before blocking.';
+  modal.hidden=false;
+}
+function hideThreatModal(){
+  const modal=document.getElementById('threatModal');
+  if(modal) modal.hidden=true;
+}
+function handleThreatScoreUpdate(score){
+  const old=latestThreatScore;
+  latestThreatScore=Number(score||0);
+  updateResponsePanel();
+  if(
+    latestThreatScore > RESPONSE_THRESHOLD &&
+    old <= RESPONSE_THRESHOLD &&
+    currentThreatIp() &&
+    !ignoredIps.has(currentThreatIp())
+  ){
+    showThreatModal();
+  }
 }
 async function blockCurrentThreat(){
   const ip=currentThreatIp(); if(!ip || latestThreatScore<RESPONSE_THRESHOLD) return;
@@ -605,6 +661,17 @@ document.getElementById('liveStop').addEventListener('click',stopLive);
 document.getElementById('liveStop').disabled=true;
 document.getElementById('responseBlock').addEventListener('click',blockCurrentThreat);
 document.getElementById('responseIgnore').addEventListener('click',ignoreCurrentThreat);
+document.getElementById('threatModalBlock').addEventListener('click',async()=>{
+  await blockCurrentThreat();
+  if(document.getElementById('responseBlock').disabled) hideThreatModal();
+});
+document.getElementById('threatModalIgnore').addEventListener('click',()=>{ ignoreCurrentThreat(); hideThreatModal(); });
+document.getElementById('threatModal').addEventListener('click',(event)=>{
+  if(event.target.id==='threatModal') hideThreatModal();
+});
+document.addEventListener('keydown',(event)=>{
+  if(event.key==='Escape') hideThreatModal();
+});
 
 let selectedGroup = null;
 let groups = [];
