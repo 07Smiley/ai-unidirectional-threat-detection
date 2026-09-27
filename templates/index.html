@@ -195,7 +195,28 @@
     background:transparent; border:1px solid var(--hairline-on-dark); border-radius:var(--rounded-pill); padding:4px 12px; flex-shrink:0;
     text-transform:uppercase; letter-spacing:0.6px;
   }
-  .source-row .conf{ font-size:12.5px; font-weight:700; text-align:right; flex-shrink:0; width:46px; }
+  .source-row .conf{ font-size:12.5px; font-weight:700; text-align:right; flex-shrink:0; width:62px; }
+  .source-row .score-label{font-size:9px;color:var(--ink-mute);display:block;text-transform:uppercase;letter-spacing:.55px;margin-bottom:1px}
+  .source-row .score-value{font-size:13px;font-weight:800}
+  .source-row .flagged-count{font-size:10.5px;color:var(--ink-mute);margin-top:2px}
+  .source-detail{padding:16px 18px;border-bottom:1px solid var(--hairline-on-dark);background:var(--canvas-night)}
+  .source-detail[hidden]{display:none!important}
+  .detail-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+  .detail-title .ip{font-size:15px;font-weight:800;letter-spacing:.35px}
+  .detail-title .verdict{font-size:10px;font-weight:800;border:1px solid var(--hairline-on-dark);border-radius:999px;padding:4px 9px;text-transform:uppercase}
+  .detail-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}
+  .detail-metric{border:1px solid var(--hairline-on-dark);border-radius:8px;padding:9px 10px}
+  .detail-metric .k{font-size:9px;color:var(--ink-mute);text-transform:uppercase;letter-spacing:.6px}
+  .detail-metric .v{font-size:15px;font-weight:800;margin-top:3px}
+  .detail-reasons{margin-top:12px;font-size:11.5px;color:var(--ink-mute);line-height:1.55}
+  .detail-reasons strong{color:var(--on-primary)}
+  .gemini-status{font-size:9.5px;font-weight:800;letter-spacing:.65px;text-transform:uppercase;border:1px solid var(--hairline-on-dark);border-radius:999px;padding:4px 8px;color:var(--on-primary-mute)}
+  .gemini-status.ready{border-color:var(--on-primary);color:var(--on-primary)}
+  .flow-score{font-size:11.5px;font-weight:800;flex-shrink:0;width:58px;text-align:right}
+  @media(max-width:700px){.detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  body.light-mode .source-detail{background:#fff}
+  body.light-mode .detail-metric{background:#fafafa}
+  body.light-mode .gemini-status.ready{background:#000;color:#fff}
 
   .empty{ padding:56px 24px; text-align:center; color:var(--ink-mute); font-size:13px; }
 
@@ -333,13 +354,17 @@
           <h2>Logs</h2>
           <span class="count mono" id="logHeaderId">—</span>
         </div>
-        <div id="logBody"><div class="empty">Select a source on the left to see every flow it sent.</div></div>
+        <div class="source-detail" id="sourceDetail" hidden></div>
+        <div id="logBody"><div class="empty">Select a flagged source on the left to see every flow it sent.</div></div>
       </section>
 
       <section class="panel">
         <div class="panel-head">
           <h2>Analysis</h2>
-          <span class="count mono" id="chatHeaderId">—</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="gemini-status" id="geminiStatus">GEMINI · CHECKING</span>
+            <span class="count mono" id="chatHeaderId">—</span>
+          </div>
         </div>
         <div class="chat-wrap">
           <div class="chat-log" id="chatLog">
@@ -376,7 +401,7 @@
    Data now comes from the real Zeek + rule-based detection pipeline.
    ============================================================ */
 
-const LIVE_API = 'http://127.0.0.1:8000';
+const LIVE_API = {{ live_api|tojson }};
 let liveSocket = null;
 let liveThreats = 0;
 let liveModelLabel = 'OFFLINE';
@@ -398,9 +423,10 @@ async function loadLiveStatus(){
     // itself is reachable.
     document.getElementById('liveStatus').textContent=running?'ONLINE':'OFFLINE';
     document.getElementById('liveStart').disabled=running;
-    // STOP is always available while the dashboard is open. The API stop
-    // endpoint is idempotent, so clicking it while offline is safe.
+    // Start/Stop only control the FastAPI live sensor. They are disabled
+    // whenever that API is unavailable; the Flask dashboard itself remains usable.
     document.getElementById('liveStop').disabled=false;
+    document.getElementById('interfaceSelect').disabled=false;
 
     if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
     const loaded=(s.models&&s.models.loaded_models)||[];
@@ -427,6 +453,7 @@ async function loadLiveStatus(){
     // live controls cannot work without the live API.
     document.getElementById('liveStart').disabled=true;
     document.getElementById('liveStop').disabled=true;
+    document.getElementById('interfaceSelect').disabled=true;
     if(liveSocket){
       try{ liveSocket.close(); }catch(err){}
       liveSocket=null;
@@ -501,7 +528,25 @@ function connectLiveSocket(){
   liveSocket.onclose=()=>{liveSocket=null};
 }
 
-async function startLive(){
+async async function loadGeminiStatus(){
+  const badge=document.getElementById('geminiStatus');
+  try{
+    const res=await fetch('/api/gemini/status',{cache:'no-store'});
+    const data=await res.json();
+    if(data.configured){
+      badge.textContent='GEMINI · READY · '+data.model;
+      badge.classList.add('ready');
+    }else{
+      badge.textContent='GEMINI · API KEY MISSING';
+      badge.classList.remove('ready');
+    }
+  }catch(e){
+    badge.textContent='GEMINI · BACKEND ERROR';
+    badge.classList.remove('ready');
+  }
+}
+
+function startLive(){
   const select=document.getElementById('interfaceSelect');
   const iface=select.value;
   if(!iface){alert('Select a usable network interface first.');return}
@@ -588,12 +633,14 @@ async function loadStats(){
     const s = await res.json();
     const total = s.flows_analyzed || 0;
     const flagPct = total > 0 ? ((s.flagged / total) * 100).toFixed(3) : '0.000';
+    const latestLabel = latestMlPrediction ? (latestMlPrediction.label || 'UNKNOWN') : '—';
+    const latestConf = latestMlPrediction ? fmtConf(latestMlPrediction.confidence) : '—';
     const strip = [
-      {label:'Flows analyzed', value:total.toLocaleString(), sub:s.flows_analyzed_window || '—', cls:''},
-      {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flagged flows · ' + flagPct + '% of total', cls:'flag'},
-      {label:'Rule confidence', value:fmtConf(s.avg_confidence), sub:'rule-based flagged flows', cls:'ok'},
-      {label:'ML confidence', value:latestMlPrediction ? fmtConf(latestMlPrediction.confidence) : '—', sub:latestMlPrediction ? ('latest '+(latestMlPrediction.label||'prediction')) : 'waiting for ML inference', cls:latestMlPrediction && Number(latestMlPrediction.confidence||0) >= 0.92 ? 'flag' : ''},
-      {label:'ML engine', value:liveModelLabel.replace('UNIDIRECTIONAL ML · ','') || 'OFFLINE', sub:'forward-only inference · 15 features', cls:''},
+      {label:'Flows analyzed', value:total.toLocaleString(), sub:s.flagged+' flagged flows · '+flagPct+'% of total', cls:''},
+      {label:'Flagged sources', value:s.flagged_sources, sub:'ordered by threat score', cls:s.flagged_sources ? 'flag' : ''},
+      {label:'Highest threat score', value:Number(s.max_threat_score||0).toFixed(0)+'%', sub:'strongest rule evidence in flows', cls:Number(s.max_threat_score||0)>=50 ? 'flag' : 'ok'},
+      {label:'Rule evidence', value:fmtConf(s.avg_confidence), sub:'average of flagged-flow scores', cls:'ok'},
+      {label:'Latest ML prediction', value:latestLabel, sub:latestConf+' ML confidence · not attack certainty', cls:latestLabel!=='BENIGN'&&latestLabel!=='—' ? 'flag' : ''},
       {label:'Threat response', value:latestThreatScore >= RESPONSE_THRESHOLD ? 'AVAILABLE' : 'MANUAL', sub:'manual block at '+RESPONSE_THRESHOLD+'%+', cls:latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : ''}
     ];
     document.getElementById('statStrip').innerHTML = strip.map(s => `
@@ -624,25 +671,33 @@ async function loadGroups(){
 }
 
 function renderGroups(){
-  document.getElementById('sourceCount').textContent = groups.length + ' sources';
+  const flaggedGroups = groups.filter(g => Number(g.threat_score||0) > 0);
+  document.getElementById('sourceCount').textContent = flaggedGroups.length + ' flagged sources';
   const list = document.getElementById('sourceList');
-  if(groups.length === 0){
-    list.innerHTML = '<div class="empty">No sources in range.</div>';
+  if(flaggedGroups.length === 0){
+    list.innerHTML = '<div class="empty">No flagged sources. All analyzed sources are currently below the threat threshold.</div>';
+    return;
   }
-  list.innerHTML = groups.map(g => {
-    const flagged = g.label !== 'BENIGN';
+  list.innerHTML = flaggedGroups.map(g => {
+    const score = Number(g.threat_score||0);
     return `
     <div class="source-row ${g.group_id===selectedGroup?'active':''}" data-id="${g.group_id}">
-      <div class="sev" style="background:${flagged?'var(--attention)':'var(--muted-ok)'}"></div>
+      <div class="sev" style="background:var(--attention)"></div>
       <div class="who">
         <div class="primary">${g.src_ip || g.host || 'Unknown source'}</div>
-        <div class="secondary">${g.host ? g.host + ' · ' : ''}last seen ${g.last_seen || '—'}</div>
+        <div class="secondary">${g.host ? g.host + ' · ' : ''}${g.label} · ${g.flagged_flows}/${g.request_count} flagged</div>
       </div>
       <div class="count-badge">${g.request_count} flows</div>
-      <div class="conf" style="color:${flagged?'var(--attention)':'var(--muted-ok)'}">${fmtConf(g.confidence)}</div>
+      <div class="conf" style="color:var(--attention)">
+        <span class="score-label">Threat score</span>
+        <span class="score-value">${score.toFixed(0)}%</span>
+      </div>
     </div>`;
   }).join('');
   list.querySelectorAll('.source-row').forEach(row => {
+    row.addEventListener('click', () => selectGroup(row.dataset.id));
+  });
+}  list.querySelectorAll('.source-row').forEach(row => {
     row.addEventListener('click', () => selectGroup(row.dataset.id));
   });
 }
@@ -665,7 +720,9 @@ async function selectGroup(id){
   document.getElementById('logHeaderId').textContent = id;
   document.getElementById('chatHeaderId').textContent = id;
 
-  document.getElementById('logBody').innerHTML = '<div class="empty">Loading…</div>';
+  document.getElementById('sourceDetail').hidden = false;
+  document.getElementById('sourceDetail').innerHTML = '<div class="empty" style="padding:20px">Loading source detail…</div>';
+  document.getElementById('logBody').innerHTML = '<div class="empty">Loading flows…</div>';
   const [logsRes, analysisRes, historyRes] = await Promise.all([
     fetch(`/api/groups/${encodeURIComponent(id)}/logs`),
     fetch(`/api/groups/${encodeURIComponent(id)}/analysis`),
@@ -675,6 +732,7 @@ async function selectGroup(id){
   const analysis = await analysisRes.json();
   const history = await historyRes.json();
 
+  renderSourceDetail(id, analysis, Array.isArray(logs) ? logs : []);
   renderLogs(Array.isArray(logs) ? logs : []);
   resetChat(analysis, history);
 
@@ -685,6 +743,31 @@ async function selectGroup(id){
   input.placeholder = `Ask about ${id}…`;
 }
 
+function renderSourceDetail(id, analysis, logs){
+  const detail=document.getElementById('sourceDetail');
+  if(!analysis || analysis.error){
+    detail.innerHTML='<div class="empty" style="padding:20px">Unable to load source analysis.</div>';
+    return;
+  }
+  const score=Number(analysis.threat_score||0);
+  const flagged=Number(analysis.flagged_flows||0);
+  const total=Number(analysis.total_flows||logs.length||0);
+  const reasons=(analysis.bullets||[]).slice(0,4);
+  detail.innerHTML=`
+    <div class="detail-title">
+      <div><div class="ip">${id}</div><div class="secondary">${analysis.label||'BENIGN'} · source-level threat score</div></div>
+      <div class="verdict">${score.toFixed(0)}% THREAT SCORE</div>
+    </div>
+    <div class="detail-grid">
+      <div class="detail-metric"><div class="k">Threat score</div><div class="v">${score.toFixed(0)}%</div></div>
+      <div class="detail-metric"><div class="k">Flagged flows</div><div class="v">${flagged}/${total}</div></div>
+      <div class="detail-metric"><div class="k">Verdict</div><div class="v">${analysis.label||'BENIGN'}</div></div>
+      <div class="detail-metric"><div class="k">Rule evidence</div><div class="v">${fmtConf(analysis.confidence)}</div></div>
+    </div>
+    <div class="detail-reasons"><strong>Why:</strong> ${reasons.length ? reasons.join(' · ') : 'No rule evidence triggered.'}</div>
+  `;
+}
+
 function renderLogs(logs){
   const body = document.getElementById('logBody');
   if(!logs.length){
@@ -693,14 +776,15 @@ function renderLogs(logs){
   }
   body.innerHTML = `<div class="log-list">${logs.map(l => {
     const flagged = l.label !== 'BENIGN';
+    const score = Number(l.threat_score||0);
     return `
     <div class="log-row">
       <span class="lbl ${flagged?'ddos':'benign'}">${l.label}</span>
       <div class="info">
         <div class="path">${l.src_ip || selectedGroup} → ${l.dst_ip}:${fmtPort(l.dst_port)}</div>
-        <div class="meta">${fmtProto(l.protocol)} · ${fmtPps(l.packets_per_sec)} pkt/s</div>
+        <div class="meta">${fmtProto(l.protocol)} · ${fmtPps(l.packets_per_sec)} pkt/s · ${flagged ? 'rule flagged' : 'benign flow'}</div>
       </div>
-      <div class="conf">${fmtConf(l.confidence)}</div>
+      <div class="flow-score">${score.toFixed(0)}%</div>
       <div class="time mono">${l.timestamp || '—'}</div>
     </div>`;
   }).join('')}</div>`;
@@ -817,6 +901,7 @@ document.getElementById('themeToggle').addEventListener('click',()=>{
 initTheme();
 loadInterfaces();
 loadLiveStatus();
+loadGeminiStatus();
 startLiveStatusPolling();
 loadStats();
 loadGroups();
