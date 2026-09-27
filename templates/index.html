@@ -47,7 +47,10 @@ body.light-mode .stat{background:#fff;border-color:var(--line)}
 .stat::after{content:"";position:absolute;right:18px;bottom:16px;width:145px;height:34px;opacity:.35;background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(57,189,248,.8) 5px 9px,transparent 9px 13px);clip-path:polygon(0 90%,8% 70%,16% 78%,24% 50%,32% 65%,40% 28%,48% 55%,56% 15%,64% 45%,72% 20%,80% 42%,88% 12%,100% 0,100% 100%,0 100%)}
 .stat:nth-child(2)::after{background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(255,71,87,.9) 5px 9px,transparent 9px 13px)}
 .stat:nth-child(3)::after{background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(255,71,87,.9) 5px 9px,transparent 9px 13px)}
-.response-panel{display:none}
+.response-panel{display:flex;align-items:center;justify-content:space-between;gap:18px;background:linear-gradient(145deg,#1a1215,#130e11);border:1px solid #6d2d36;border-radius:12px;padding:16px 20px;box-shadow:var(--shadow)}
+.response-panel[hidden]{display:none!important}
+.response-title{font-size:14px;font-weight:900;color:#ff6670;letter-spacing:.3px}
+.response-detail{font-size:13px;margin-top:4px}.response-meta{font-size:11px;color:var(--muted);margin-top:3px}.response-panel>div:last-child{display:flex;gap:10px;flex-shrink:0}
 .threat-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999;backdrop-filter:blur(7px)}
 .threat-modal-backdrop[hidden]{display:none!important}
 .threat-modal{width:min(560px,100%);background:#0b1117;border:1px solid var(--red);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.6);padding:26px;color:#fff}
@@ -192,7 +195,7 @@ async function loadLiveStatus(){
     document.getElementById('liveStart').disabled=running;
     // Start/Stop only control the FastAPI live sensor. They are disabled
     // whenever that API is unavailable; the Flask dashboard itself remains usable.
-    document.getElementById('liveStop').disabled=false;
+    document.getElementById('liveStop').disabled=!running;
     document.getElementById('interfaceSelect').disabled=false;
 
     if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
@@ -503,7 +506,6 @@ async function selectGroup(id){
   selectedGroup = id;
   renderGroups();
   document.getElementById('logHeaderId').textContent = id;
-  document.getElementById('chatHeaderId').textContent = id;
 
   document.getElementById('sourceDetail').hidden = false;
   document.getElementById('sourceDetail').innerHTML = '<div class="empty" style="padding:20px">Loading source detail…</div>';
