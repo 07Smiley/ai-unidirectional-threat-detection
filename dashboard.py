@@ -33,7 +33,7 @@ app = Flask(__name__)
 # trades reasoning quality for speed in a way that isn't worth it here.
 # =============================================================================
 
-GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 _gemini_client = None
 
 
@@ -554,18 +554,19 @@ class RealDataProvider:
                     raw_id = f"{src_ip}:{dst_ip}:{dst_port}:{ts}"
                     flow_id = "fl_" + hashlib.md5(raw_id.encode()).hexdigest()[:8]
 
-                # Compute a severity-derived confidence for flagged flows.
-                # Rule-based detectors don't produce a probability, so we
-                # derive a rough indicator from severity level.
-                # BENIGN flows get confidence = None (honestly absent).
+                # Rule detectors do not emit calibrated probabilities. Keep
+                # their evidence as an explicitly named 0-100 threat score
+                # derived only from severity; never present it as ML certainty.
                 if label != "BENIGN":
                     if severity == "high":
-                        confidence = 0.85
+                        threat_score = 85.0
                     elif severity == "medium":
-                        confidence = 0.65
+                        threat_score = 65.0
                     else:
-                        confidence = 0.50
+                        threat_score = 50.0
+                    confidence = threat_score / 100.0
                 else:
+                    threat_score = 0.0
                     confidence = None
 
                 try:
@@ -583,6 +584,7 @@ class RealDataProvider:
                     "dst_port": dst_port_int,
                     "protocol": proto if proto and proto != "-" else None,
                     "confidence": confidence,
+                    "threat_score": threat_score,
                     "label": label,
                     "packets_per_sec": round(packet_rate, 1),
                     "why": why,
@@ -662,16 +664,20 @@ def get_groups():
             "src_ip": flow["src_ip"],
             "host": flow.get("host"),
             "request_count": 0,
+            "flagged_flows": 0,
             "label": "BENIGN",
             "confidence": None,
+            "threat_score": 0.0,
             "last_seen": flow["timestamp"],
             "_last_epoch": flow.get("timestamp_epoch", 0),
         })
         g["request_count"] += 1
-        # Promote to the worst threat label seen
+        # A source score is the strongest observed flow score for that source.
+        flow_score = float(flow.get("threat_score", 0.0) or 0.0)
+        g["threat_score"] = max(g["threat_score"], flow_score)
         if flow["label"] != "BENIGN":
+            g["flagged_flows"] += 1
             g["label"] = flow["label"]
-        # Track highest confidence (only for flagged flows)
         if flow["confidence"] is not None:
             if g["confidence"] is None or flow["confidence"] > g["confidence"]:
                 g["confidence"] = flow["confidence"]
@@ -690,10 +696,12 @@ def get_groups():
         del g["_last_epoch"]
         result.append(g)
 
+    # Highest threat score first. Benign sources naturally fall to the bottom.
     return sorted(result, key=lambda g: (
-        0 if g["label"] != "BENIGN" else 1,
+        -g["threat_score"],
         -(g["confidence"] or 0),
         -g["request_count"],
+        g["src_ip"],
     ))
 
 
@@ -741,6 +749,10 @@ def get_group_analysis(group_id):
             "bullets": all_why if all_why else ["Flagged by rule-based detection engine."],
             "label": worst["label"],
             "confidence": worst.get("confidence"),
+            "threat_score": max(float(l.get("threat_score", 0.0) or 0.0) for l in flagged),
+            "total_flows": total,
+            "flagged_flows": len(flagged),
+            "top_flow": worst,
         }
     else:
         lead = f"All {total} flow(s) from this source look benign — no rule-based detections triggered."
@@ -749,6 +761,10 @@ def get_group_analysis(group_id):
             "bullets": [],
             "label": "BENIGN",
             "confidence": None,
+            "threat_score": 0.0,
+            "total_flows": total,
+            "flagged_flows": 0,
+            "top_flow": logs[0],
         }
 
 
@@ -835,7 +851,18 @@ def answer_group_chat(group_id, message):
 
 @app.route("/")
 def home():
-    return render_template("index.html")
+    backend_host = os.environ.get("BACKEND_HOST", "127.0.0.1")
+    backend_port = os.environ.get("BACKEND_PORT", "8000")
+    live_api = f"http://{backend_host}:{backend_port}"
+    return render_template("index.html", live_api=live_api)
+
+
+@app.route("/api/gemini/status")
+def api_gemini_status():
+    return jsonify({
+        "configured": bool(os.environ.get("GEMINI_API_KEY")),
+        "model": GEMINI_MODEL,
+    })
 
 
 @app.route("/api/stats")
@@ -858,9 +885,13 @@ def api_stats():
     avg_conf = (
         sum(f["confidence"] for f in flagged_with_conf) / len(flagged_with_conf)
     ) if flagged_with_conf else 0.0
+    max_threat_score = max(
+        (float(f.get("threat_score", 0.0) or 0.0) for f in flows),
+        default=0.0,
+    )
 
     groups = get_groups()
-    flagged_sources = len([g for g in groups if g["label"] != "BENIGN"])
+    flagged_sources = len([g for g in groups if g["threat_score"] > 0])
 
     conn_log = _data_provider.get_conn_log_path()
     window = str(conn_log) if conn_log else "Unknown"
@@ -871,6 +902,7 @@ def api_stats():
         "flagged": len(flagged_flows),
         "flagged_sources": flagged_sources,
         "avg_confidence": round(avg_conf, 4),
+        "max_threat_score": round(max_threat_score, 2),
         "model": "Rule-Based Engine",
     })
 
