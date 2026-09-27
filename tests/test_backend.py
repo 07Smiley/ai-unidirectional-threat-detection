@@ -265,3 +265,25 @@ def test_gemini_status_never_exposes_api_key(monkeypatch):
     assert response.status_code == 200
     assert response.json["configured"] is True
     assert "secret" not in response.get_data(as_text=True)
+
+
+
+def test_live_status_tracks_predictions_from_all_models(tmp_path):
+    from backend.live_service import LiveMonitoringService
+
+    service = LiveMonitoringService(lambda payload: None, log_dir=tmp_path / "zeek")
+    for model in ("bot", "ddos", "dos", "infiltration", "patator", "portscan", "webattack"):
+        service._on_event({
+            "source": "ml",
+            "type": "ml_prediction",
+            "model": model,
+            "label": "BENIGN",
+            "confidence": 0.99,
+            "src_ip": "10.0.0.1",
+            "dst_ip": "10.0.0.2",
+        })
+
+    status = service.status()
+    assert set(status["latest_ml"]["predictions_by_model"]) == {
+        "bot", "ddos", "dos", "infiltration", "patator", "portscan", "webattack"
+    }
