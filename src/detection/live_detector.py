@@ -4,6 +4,8 @@ from collections import deque
 
 import pandas as pd
 
+from src.detection.model_gate import detect_model_candidates
+
 from src.detection.beaconing import detect_beaconing
 from src.detection.ddos import detect_ddos
 from src.detection.dga import is_suspicious_domain
@@ -83,4 +85,5 @@ class LiveThreatDetector:
             + self._detect_dga_live(window)
             + detect_exfiltration_live(window)
             + detect_encrypted_live(window)
+            + detect_model_candidates(window)
         )
