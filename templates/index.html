@@ -201,6 +201,8 @@ let latestThreatScore = 0;
 let latestMlPrediction = null;
 let lastPromptedScore = null;
 const ignoredIps = new Set();
+const handledResponseIps = new Set();
+let responseActionInFlight = false;
 const RESPONSE_THRESHOLD = 92;
 
 async function loadLiveStatus(){
@@ -330,6 +332,11 @@ async function loadGeminiStatus(){
 }
 
 async function startLive(){
+  handledResponseIps.clear();
+  ignoredIps.clear();
+  latestThreatScore=0;
+  latestMlPrediction=null;
+  hideThreatModal();
   const select=document.getElementById('interfaceSelect');
   const iface=select.value;
   if(!iface){alert('Select a usable network interface first.');return}
@@ -350,7 +357,7 @@ function currentThreatIp(){
 function updateResponsePanel(){
   const panel=document.getElementById('responsePanel'); if(!panel) return;
   const ip=currentThreatIp();
-  const eligible=latestThreatScore>=RESPONSE_THRESHOLD && !!ip && !ignoredIps.has(ip);
+  const eligible=latestThreatScore>=RESPONSE_THRESHOLD && !!ip && !ignoredIps.has(ip) && !handledResponseIps.has(ip);
   panel.hidden=!eligible;
   if(!eligible) return;
   const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
@@ -362,7 +369,7 @@ function updateResponsePanel(){
 function showThreatModal(){
   const modal=document.getElementById('threatModal');
   const ip=currentThreatIp();
-  if(!modal || !ip || latestThreatScore < RESPONSE_THRESHOLD || ignoredIps.has(ip)) return;
+  if(!modal || !ip || latestThreatScore < RESPONSE_THRESHOLD || ignoredIps.has(ip) || handledResponseIps.has(ip) || responseActionInFlight) return;
   const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
   const model=latestMlPrediction&&latestMlPrediction.model?latestMlPrediction.model:'UNIDIRECTIONAL ML';
   document.getElementById('threatModalScore').textContent=latestThreatScore.toFixed(0)+'%';
@@ -381,28 +388,51 @@ function handleThreatScoreUpdate(score){
     latestThreatScore >= RESPONSE_THRESHOLD &&
     old <= RESPONSE_THRESHOLD &&
     currentThreatIp() &&
-    !ignoredIps.has(currentThreatIp())
+    !ignoredIps.has(currentThreatIp()) &&
+    !handledResponseIps.has(currentThreatIp()) &&
+    !responseActionInFlight
   ){
     showThreatModal();
   }
 }
 async function blockCurrentThreat(){
-  const ip=currentThreatIp(); if(!ip || latestThreatScore<RESPONSE_THRESHOLD) return;
+  const ip=currentThreatIp();
+  if(!ip || latestThreatScore<RESPONSE_THRESHOLD || handledResponseIps.has(ip) || responseActionInFlight) return;
   const ok=window.confirm('Block source IP '+ip+' on this host?\\n\\nThreat score: '+latestThreatScore.toFixed(0)+'%\\nAction requires your confirmation.');
   if(!ok) return;
+  responseActionInFlight=true;
+  document.getElementById('threatModalBlock').disabled=true;
+  document.getElementById('threatModalIgnore').disabled=true;
+  document.getElementById('responseBlock').disabled=true;
+  hideThreatModal();
   try{
     const res=await fetch(LIVE_API+'/api/live/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'block',ip})});
     const data=await res.json(); if(!res.ok) throw new Error(data.detail||'Firewall action failed');
     document.getElementById('responseTitle').textContent='SOURCE IP BLOCKED';
     document.getElementById('responseDetail').textContent=ip+' was blocked on this host.';
     document.getElementById('responseMeta').textContent='Manual response completed.';
-    document.getElementById('responseBlock').disabled=true;
-  }catch(e){window.alert('Response failed: '+e.message);}
+    handledResponseIps.add(ip);
+    document.getElementById('responsePanel').hidden=true;
+    hideThreatModal();
+  }catch(e){
+    document.getElementById('responseBlock').disabled=false;
+    document.getElementById('threatModalBlock').disabled=false;
+    document.getElementById('threatModalIgnore').disabled=false;
+    window.alert('Response failed: '+e.message);
+  }finally{
+    responseActionInFlight=false;
+  }
 }
 function ignoreCurrentThreat(){
-  const ip=currentThreatIp(); if(!ip) return;
-  ignoredIps.add(ip); document.getElementById('responsePanel').hidden=true;
-  document.getElementById('responseBlock').disabled=false; lastPromptedScore=null;
+  const ip=currentThreatIp(); if(!ip || responseActionInFlight) return;
+  handledResponseIps.add(ip);
+  ignoredIps.add(ip);
+  hideThreatModal();
+  document.getElementById('responsePanel').hidden=true;
+  document.getElementById('responseBlock').disabled=false;
+  document.getElementById('threatModalBlock').disabled=false;
+  document.getElementById('threatModalIgnore').disabled=false;
+  lastPromptedScore=null;
 }
 async function stopLive(){
   const button=document.getElementById('liveStop');
