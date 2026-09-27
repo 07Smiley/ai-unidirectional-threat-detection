@@ -21,6 +21,8 @@ def test_capture_starts_and_stops(mock_sniffer):
     received = []
     capture = LivePacketCapture("test0", received.append)
 
+    assert capture.extractor.unidirectional is True
+
     capture.start()
 
     mock_sniffer.assert_called_once()

@@ -163,16 +163,30 @@ class LiveMonitoringService:
             self.zeek.stop()
             raise
 
-        self.reader = LiveZeekReader(
-            self.zeek.log_dir / "conn.log",
-            start_at_end=False,
-        )
-        self.worker = threading.Thread(
-            target=self._run_reader,
-            name="live-threat-detector",
-            daemon=True,
-        )
-        self.worker.start()
+        try:
+            self.reader = LiveZeekReader(
+                self.zeek.log_dir / "conn.log",
+                start_at_end=False,
+            )
+            self.worker = threading.Thread(
+                target=self._run_reader,
+                name="live-threat-detector",
+                daemon=True,
+            )
+            self.worker.start()
+        except Exception:
+            # If reader/thread setup fails after both sensors are running,
+            # leave the service in a clean stopped state rather than leaking
+            # a live capture process in the background.
+            self.worker = None
+            self.reader = None
+            if self.packet_capture is not None:
+                try:
+                    self.packet_capture.stop()
+                finally:
+                    self.packet_capture = None
+            self.zeek.stop()
+            raise
 
         return self.status()
 

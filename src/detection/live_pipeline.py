@@ -12,7 +12,12 @@ from src.detection.threat_score import calculate_threat_evidence, response_offer
 
 
 class LiveDetectionPipeline:
-    """End-to-end live Zeek -> features -> rules + optional ML pipeline."""
+    """End-to-end live Zeek -> rules + packet-derived unidirectional ML pipeline.
+
+The live rule path currently covers scanning, DDoS and beaconing. DGA,
+exfiltration and TLS/QUIC modules are not silently treated as live unless
+their required telemetry is explicitly connected.
+"""
 
     def __init__(
         self,
