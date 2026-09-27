@@ -149,7 +149,7 @@
   /* ---------- layout ---------- */
   .shell{ max-width:1440px; margin:0 auto; padding:var(--sp-xl) var(--sp-xxl) var(--sp-huge); display:flex; flex-direction:column; gap:var(--sp-xl); }
 
-  .stats{ display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:var(--sp-md); } @media(max-width:1200px){.stats{grid-template-columns:repeat(4,minmax(0,1fr));}} @media(max-width:760px){.stats{grid-template-columns:repeat(2,minmax(0,1fr));}}
+  .stats{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--sp-md); } @media(max-width:760px){.stats{grid-template-columns:1fr;}}
   .stat{ background:var(--canvas-night-soft); border:1px solid var(--hairline-on-dark); border-radius:var(--rounded-sm); padding:var(--sp-lg) var(--sp-xl); }
   .stat .label{ font-size:12px; color:var(--on-primary-mute); text-transform:uppercase; letter-spacing:0.96px; }
   .stat .value{ font-size:26px; font-weight:700; margin-top:var(--sp-xs); color:var(--on-primary); font-family:'D-DIN-Bold', 'Arial Narrow', Arial, Verdana, sans-serif; letter-spacing:0.5px; }
@@ -626,13 +626,9 @@ async function loadStats(){
     const flagPct = total > 0 ? ((s.flagged / total) * 100).toFixed(3) : '0.000';
     const strip = [
       {label:'Flows analyzed', value:total.toLocaleString(), sub:s.flows_analyzed_window || '—', cls:''},
-      {label:'Flagged sources', value:s.flagged_sources, sub:s.flagged + ' flagged flows · ' + flagPct + '% of total', cls:'flag'},
-      {label:'Rule confidence', value:fmtConf(s.avg_confidence), sub:'rule-based flagged flows', cls:'ok'},
-      {label:'ML confidence', value:latestMlPrediction ? fmtConf(latestMlPrediction.confidence) : '—', sub:latestMlPrediction ? ((latestMlPrediction.model||'ML')+' · '+(latestMlPrediction.label||'prediction')) : 'waiting for ML inference', cls:latestMlPrediction && Number(latestMlPrediction.confidence||0) >= 0.92 ? 'flag' : ''},
-      {label:'Threat score', value:latestThreatScore.toFixed(0)+'%', sub:latestMlPrediction ? 'strongest malicious model confidence' : 'waiting for ML inference', cls:latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : ''},
-      {label:'ML engine', value:liveModelLabel.replace('UNIDIRECTIONAL ML · ','') || 'OFFLINE', sub:'forward-only inference · 15 features', cls:''},
-      {label:'Threat response', value:latestThreatScore >= RESPONSE_THRESHOLD ? 'AVAILABLE' : 'MANUAL', sub:'manual block at '+RESPONSE_THRESHOLD+'% · confirmation required', cls:latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : ''}
-    ];
+      {label:'Flagged', value:s.flagged, sub:s.flagged_sources + ' flagged sources · ' + flagPct + '% of total', cls:'flag'},
+      {label:'Threat score', value:latestThreatScore.toFixed(0)+'%', sub:latestMlPrediction ? 'strongest malicious model confidence' : 'waiting for ML inference', cls:latestThreatScore >= RESPONSE_THRESHOLD ? 'flag' : ''}
+    
     document.getElementById('statStrip').innerHTML = strip.map(s => `
       <div class="stat ${s.cls}">
         <div class="label">${s.label}</div>
