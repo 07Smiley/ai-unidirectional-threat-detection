@@ -1,6 +1,10 @@
 # AI Unidirectional Threat Detection
 
-AI-powered passive network threat detection for **one-way / unidirectional traffic**. The system captures traffic with Zeek, converts live logs into flow features, runs detection models and rules, and streams alerts to a dashboard.
+AI-powered passive network threat detection designed for **one-way / unidirectional traffic**. The system observes live traffic with Zeek and packet capture, extracts only forward/observed-direction features for ML, performs first-stage behavioral detection, routes flagged sources into seven unidirectional ML models, calculates a threat score, and presents the result in a live dashboard.
+
+> **Project status: Final implementation complete and end-to-end validated.**
+>
+> The complete live path has been validated on a real network interface: live capture, Zeek telemetry, first-stage detection, detection-to-ML gating, seven-model inference, threat scoring, dashboard updates, activity timing, the 92% response threshold, and explicit response handling all work together.
 
 ![System Architecture](docs/architecture.svg)
 
@@ -8,18 +12,49 @@ AI-powered passive network threat detection for **one-way / unidirectional traff
 
 ```text
 ONE-WAY TRAFFIC
-      ↓
-ZEek SENSOR
-      ↓
-LIVE ZEEK LOGS
-      ↓
-FEATURE EXTRACTION
-      ↓
-AI/ML + RULE DETECTORS
-      ↓
-THREAT SCORING
-      ↓
-LIVE DASHBOARD / ALERT
+                         LIVE NETWORK
+                              |
+                    +---------+---------+
+                    |                   |
+                 ZEEK              PACKET CAPTURE
+                    |                   |
+              conn/dns/etc.       CICFlow extraction
+                    |                   |
+                    +---------+---------+
+                              |
+                     OBSERVED / FORWARD
+                       FLOW FEATURES
+                              |
+                              v
+                 FIRST-STAGE DETECTION
+          +-------------------+-------------------+
+          |                   |                   |
+      Port Scan             DDoS             Beaconing/C2
+          |                   |                   |
+         DGA             Exfiltration        TLS/QUIC ID
+          |                   |                   |
+          +-------------------+-------------------+
+                              |
+                         SOURCE FLAGGED?
+                           /         \\
+                         NO           YES
+                         |             |
+                       STOP            v
+                              7 UNIDIRECTIONAL ML
+                                     MODELS
+                                       |
+                                       v
+                                 THREAT SCORE
+                                       |
+                                    >= 92% ?
+                                   /         \\
+                                 NO           YES
+                                 |             |
+                               ALERT       RESPONSE OFFER
+                                               |
+                                        USER CONFIRMATION
+                                          /           \\
+                                       IGNORE         BLOCK
 ```
 
 The application is designed around **passive monitoring**. It does not need to actively scan the monitored network.
@@ -44,28 +79,36 @@ The live ML engine uses a strict forward-only feature schema. It does not feed B
 
 The same unidirectional observation can support multiple threat families. DDoS is only one detector; the runtime loads separate unidirectional artifacts for DDoS, DoS, PortScan, Infiltration, Patator, WebAttack and Bot/Net behavior. The live packet-derived ML path is limited to the features defined by the runtime schema. The first-stage gate uses every detector for which the live telemetry is available. DGA requires a `query` field; TLS/QUIC identification uses observed protocol/port information. The encrypted module does not claim that ordinary TLS/QUIC is malicious.
 
-## Detection roadmap
+## Final implementation checklist
 
 | Capability | Status |
 |---|---|
-| Live Zeek control | Implemented |
-| Live Zeek log reader | Implemented |
-| Live feature extraction | Implemented |
-| Live detection gate (scanning/DDoS/beaconing/DGA/exfiltration/TLS-QUIC identification) | Implemented when required telemetry is present |
-| Dashboard Zeek-log DGA detection | Implemented |
-| Dashboard Zeek-log exfiltration detection | Implemented |
-| Live DGA detection from DNS query telemetry | Implemented when query telemetry is supplied |
-| Live TLS/QUIC traffic identification | Implemented; this is identification, not anomaly scoring |
-| FastAPI live API | Implemented |
-| WebSocket live events | Implemented |
-| Dashboard live controls | Implemented |
-| ML runtime/schema validation | Implemented |
-| ML models trained on exact live schema | Implemented |
-| ML predictions connected to live event stream | Implemented |
-| Alert deduplication | Implemented |
-| Unidirectional-aware feature set | Implemented |
-| Full real-NIC end-to-end validation | **Remaining** |
-| Cross-platform deployment validation | **Remaining** |
+| Live Zeek control | Complete |
+| Live Zeek log reader | Complete |
+| Live packet capture | Complete |
+| Live feature extraction | Complete |
+| Forward-only / unidirectional ML schema | Complete |
+| Port scanning detection | Complete |
+| DDoS / DoS detection | Complete |
+| Beaconing / C2 detection | Complete |
+| DGA detection when DNS query telemetry is available | Complete |
+| Forward-only exfiltration detection | Complete |
+| TLS/QUIC traffic identification | Complete |
+| Detection → ML source gating | Complete |
+| Seven unidirectional ML models | Complete |
+| Runtime model/schema validation | Complete |
+| Threat scoring | Complete |
+| 92% response threshold | Complete |
+| Explicit user-confirmed block/ignore workflow | Complete |
+| No automatic blocking | Complete |
+| Live WebSocket events | Complete |
+| Dashboard live controls/status | Complete |
+| Live threat-score display | Complete |
+| Activity duration/live timing | Complete |
+| Alert deduplication | Complete |
+| Automated test suite | Complete |
+| CI validation | Complete |
+| Real-NIC end-to-end validation | **Complete** |
 
 ## Setup
 
@@ -204,7 +247,7 @@ The live runtime now loads and validates the seven deployed unidirectional model
 
 Each artifact must declare the exact forward-only feature schema and the supported `random_forest_unidirectional` model type. Legacy bidirectional detector artifacts are ignored by live inference.
 
-The live packet-derived ML predictions are connected to the FastAPI event stream and dashboard. The dashboard distinguishes the winning model's ML confidence from the overall threat score. The current threat score is the strongest malicious model confidence for the observed flow; it is not a calibrated ensemble probability.
+The live packet-derived ML predictions are connected to the FastAPI event stream and dashboard. The dashboard exposes the **threat score** separately from individual model confidence. The current score represents the strongest malicious model evidence associated with the observed flow; it is not a calibrated ensemble probability.
 
 A threat score at or above the configured **92% response threshold** creates a response offer only. The dashboard requires explicit user confirmation before calling `POST /api/live/response`; blocking is never automatic.
 
@@ -229,7 +272,55 @@ pytest -q
 
 CI runs the automated test suite on pushes to the repository. The test suite covers feature-contract isolation, model artifact validation, live pipeline behavior, detection rules, dashboard data paths, and response-policy behavior.
 
-The Zeek manager also has a live-capture smoke check that starts Zeek on a selected interface, verifies the live `conn.log` path, and cleans the sensor up again. A real deployment still needs a controlled real-NIC test with representative traffic on each target operating system.
+The Zeek manager also has a live-capture smoke check that starts Zeek on a selected interface, verifies the live `conn.log` path, and cleans the sensor up again. In addition, the completed project validation included a controlled real-NIC end-to-end run covering capture → detection → ML → threat score → dashboard → response workflow.
+
+## End-to-end validation
+
+The completed real-NIC validation covered the full application path:
+
+1. Select a real capture interface.
+2. Start live monitoring.
+3. Confirm Zeek live capture and telemetry.
+4. Confirm packet capture produces observed-direction flows.
+5. Generate controlled traffic to trigger first-stage detection.
+6. Confirm the source is flagged before packet-derived ML inference.
+7. Confirm the flagged flow reaches the seven unidirectional ML models.
+8. Confirm predictions reach the backend and dashboard.
+9. Confirm the live threat score updates.
+10. Confirm activity duration/live timing updates.
+11. Confirm the response offer appears at the configured threshold.
+12. Confirm no automatic firewall action occurs.
+13. Confirm an explicitly confirmed response reaches the firewall action layer.
+
+This validates the integrated system, not only isolated unit tests.
+
+## Final demo flow
+
+```text
+Start application
+      ↓
+Open dashboard
+      ↓
+Select real capture interface
+      ↓
+Start live monitoring
+      ↓
+Show Zeek + packet capture status
+      ↓
+Generate controlled test traffic
+      ↓
+Show first-stage detection
+      ↓
+Show flagged source entering ML
+      ↓
+Show seven-model predictions
+      ↓
+Show threat score + activity duration
+      ↓
+If score >= 92%, show response confirmation
+      ↓
+Confirm or ignore
+```
 
 ## Security notes
 
