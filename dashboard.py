@@ -5,6 +5,7 @@ import time
 import hashlib
 import traceback
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -345,13 +346,16 @@ def _threat_matches_flow(threat, src_ip, dst_ip, dst_port, flow_ts):
     return False
 
 
+DASHBOARD_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
 def _format_timestamp(ts_epoch):
-    """Convert a Unix epoch timestamp to a human-readable HH:MM:SS string."""
+    """Convert a Unix epoch timestamp to local dashboard time (IST)."""
     try:
         ts = float(ts_epoch)
         if pd.isna(ts):
             return "—"
-        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M:%S")
+        return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(DASHBOARD_TIMEZONE).strftime("%H:%M:%S")
     except (ValueError, TypeError, OSError):
         return "—"
 
@@ -744,7 +748,20 @@ def get_group_analysis(group_id):
             if port not in ports:
                 ports.append(port)
 
-    timestamps = [str(l.get("timestamp")) for l in logs if l.get("timestamp")]
+    # get_group_logs() is intentionally newest-first for the flow table.
+    # First/last seen must therefore be derived from epoch time, not list order.
+    timed_logs = [
+        l for l in logs
+        if l.get("timestamp_epoch") is not None
+        and _safe_float(l.get("timestamp_epoch"), None) is not None
+    ]
+    if timed_logs:
+        first_log = min(timed_logs, key=lambda l: _safe_float(l.get("timestamp_epoch"), 0))
+        last_log = max(timed_logs, key=lambda l: _safe_float(l.get("timestamp_epoch"), 0))
+        first_seen = first_log.get("timestamp", "—")
+        last_seen = last_log.get("timestamp", "—")
+    else:
+        first_seen = last_seen = "—"
     reasons = []
     seen_reasons = set()
     for l in flagged:
@@ -769,8 +786,8 @@ def get_group_analysis(group_id):
             "flagged_flows": len(flagged),
             "protocol": protocol,
             "top_ports": ports[:8],
-            "first_seen": timestamps[0] if timestamps else "—",
-            "last_seen": timestamps[-1] if timestamps else "—",
+            "first_seen": first_seen,
+            "last_seen": last_seen,
             "top_flow": worst,
         }
 
@@ -784,8 +801,8 @@ def get_group_analysis(group_id):
         "flagged_flows": 0,
         "protocol": protocol,
         "top_ports": ports[:8],
-        "first_seen": timestamps[0] if timestamps else "—",
-        "last_seen": timestamps[-1] if timestamps else "—",
+        "first_seen": first_seen,
+        "last_seen": last_seen,
         "top_flow": logs[0],
     }
 
