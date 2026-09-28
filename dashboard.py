@@ -371,6 +371,23 @@ def _format_iso_timestamp(ts_epoch):
         return ""
 
 
+def _format_activity_duration(seconds):
+    """Format elapsed source activity as a compact human-readable duration."""
+    try:
+        total = max(0, int(round(float(seconds))))
+    except (ValueError, TypeError):
+        return "0s"
+
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
 class RealDataProvider:
     """Reads Zeek logs, runs the Phase 1 detection pipeline, and caches
     the results. The cache is invalidated when the conn.log file's mtime
@@ -756,12 +773,11 @@ def get_group_analysis(group_id):
         and _safe_float(l.get("timestamp_epoch"), None) is not None
     ]
     if timed_logs:
-        first_log = min(timed_logs, key=lambda l: _safe_float(l.get("timestamp_epoch"), 0))
-        last_log = max(timed_logs, key=lambda l: _safe_float(l.get("timestamp_epoch"), 0))
-        first_seen = first_log.get("timestamp", "—")
-        last_seen = last_log.get("timestamp", "—")
+        first_epoch = min(_safe_float(l.get("timestamp_epoch"), 0) for l in timed_logs)
+        last_epoch = max(_safe_float(l.get("timestamp_epoch"), 0) for l in timed_logs)
+        activity_duration = _format_activity_duration(last_epoch - first_epoch)
     else:
-        first_seen = last_seen = "—"
+        activity_duration = "—"
     reasons = []
     seen_reasons = set()
     for l in flagged:
@@ -786,8 +802,7 @@ def get_group_analysis(group_id):
             "flagged_flows": len(flagged),
             "protocol": protocol,
             "top_ports": ports[:8],
-            "first_seen": first_seen,
-            "last_seen": last_seen,
+            "activity_duration": activity_duration,
             "top_flow": worst,
         }
 
@@ -801,8 +816,7 @@ def get_group_analysis(group_id):
         "flagged_flows": 0,
         "protocol": protocol,
         "top_ports": ports[:8],
-        "first_seen": first_seen,
-        "last_seen": last_seen,
+        "activity_duration": activity_duration,
         "top_flow": logs[0],
     }
 
