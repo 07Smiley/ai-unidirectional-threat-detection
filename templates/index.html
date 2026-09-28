@@ -34,6 +34,9 @@ body.light-mode .live-select{background:#fff;border-color:var(--line)}
 .live-btn:disabled{opacity:.4;cursor:not-allowed}
 .live-status{font-size:10px;font-weight:800;letter-spacing:.7px;color:var(--green);white-space:nowrap}
 .theme-toggle{height:46px;background:transparent;border:0;color:var(--text);font-weight:800;cursor:pointer;white-space:nowrap}
+.live-clock{min-width:150px;text-align:right;line-height:1.15}
+.live-clock .time{font-size:16px;font-weight:900;letter-spacing:.4px}
+.live-clock .date{font-size:10px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.45px}
 .shell{max-width:1500px;margin:0 auto;padding:32px 34px 48px;display:flex;flex-direction:column;gap:22px}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
 .stat{position:relative;min-height:112px;background:linear-gradient(145deg,#0f1b25,#0b151e);border:1px solid #20313f;border-radius:12px;padding:22px 24px 18px 128px;overflow:hidden;box-shadow:var(--shadow)}
@@ -123,7 +126,7 @@ body.light-mode .log-row{border-color:var(--line)}
 .sensor-control[hidden]{display:none!important}
 ::-webkit-scrollbar{width:7px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#29404f;border-radius:7px}
 @media(max-width:1100px){header{padding:0 20px}.brand{min-width:250px}.main{grid-template-columns:1fr}.model-badge{margin-left:auto}.log-row,.log-table-head{grid-template-columns:70px 1.4fr 65px 70px 65px 75px 75px}}
-@media(max-width:760px){header{height:auto;min-height:86px;flex-wrap:wrap;padding:15px 16px;gap:12px}.brand{min-width:0}.brand-text h1{font-size:20px}.brand-text p{font-size:9px}.model-badge{order:3;width:100%;text-align:center}.live-controls{margin-left:auto}.stats{grid-template-columns:1fr}.shell{padding:18px 12px}.detail-grid{grid-template-columns:repeat(2,1fr)}.log-table-head{display:none}.log-row{display:flex;flex-wrap:wrap;gap:7px}.log-row>*{min-width:70px}}
+@media(max-width:760px){header{height:auto;min-height:86px;flex-wrap:wrap;padding:15px 16px;gap:12px}.brand{min-width:0}.brand-text h1{font-size:20px}.brand-text p{font-size:9px}.model-badge{order:3;width:100%;text-align:center}.live-controls{margin-left:auto}.live-clock{min-width:125px}.live-clock .time{font-size:14px}.stats{grid-template-columns:1fr}.shell{padding:18px 12px}.detail-grid{grid-template-columns:repeat(2,1fr)}.log-table-head{display:none}.log-row{display:flex;flex-wrap:wrap;gap:7px}.log-row>*{min-width:70px}}
 </style>
 </head>
 <body>
@@ -139,6 +142,10 @@ body.light-mode .log-row{border-color:var(--line)}
     <button id="liveStart" class="live-btn sensor-control">▶ START LIVE</button>
     <button id="liveStop" class="live-btn secondary sensor-control" disabled>◉ STOP</button>
     <button id="themeToggle" class="theme-toggle" type="button">☀ LIGHT</button>
+    <div class="live-clock" id="liveClock" aria-label="Live date and time">
+      <div class="time" id="liveClockTime">--:--:--</div>
+      <div class="date" id="liveClockDate">Loading date…</div>
+    </div>
     <span id="liveStatus" class="live-status sensor-control">API OFFLINE</span>
   </div>
 </header>
@@ -303,6 +310,29 @@ async function focusThreatSource(){
 const handledResponseIps = new Set();
 let responseActionInFlight = false;
 const RESPONSE_THRESHOLD = 92;
+
+function updateLiveClock(){
+  const now = new Date();
+  const time = now.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const date = now.toLocaleDateString([], {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
+  const timeEl = document.getElementById('liveClockTime');
+  const dateEl = document.getElementById('liveClockDate');
+  if(timeEl) timeEl.textContent = time;
+  if(dateEl) dateEl.textContent = date;
+}
+
+updateLiveClock();
+setInterval(updateLiveClock, 1000);
 
 async function loadLiveStatus(){
   try{
