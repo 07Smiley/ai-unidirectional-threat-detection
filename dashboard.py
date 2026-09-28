@@ -669,15 +669,18 @@ def get_groups():
             "confidence": None,
             "threat_score": 0.0,
             "last_seen": flow["timestamp"],
+            "last_seen_epoch": flow.get("timestamp_epoch", 0),
             "_last_epoch": flow.get("timestamp_epoch", 0),
         })
         g["request_count"] += 1
         # A source score is the strongest observed flow score for that source.
         flow_score = float(flow.get("threat_score", 0.0) or 0.0)
-        g["threat_score"] = max(g["threat_score"], flow_score)
+        if flow_score > g["threat_score"]:
+            g["threat_score"] = flow_score
+            if flow["label"] != "BENIGN":
+                g["label"] = flow["label"]
         if flow["label"] != "BENIGN":
             g["flagged_flows"] += 1
-            g["label"] = flow["label"]
         if flow["confidence"] is not None:
             if g["confidence"] is None or flow["confidence"] > g["confidence"]:
                 g["confidence"] = flow["confidence"]
@@ -685,6 +688,7 @@ def get_groups():
         flow_epoch = flow.get("timestamp_epoch", 0)
         if flow_epoch > g["_last_epoch"]:
             g["last_seen"] = flow["timestamp"]
+            g["last_seen_epoch"] = flow_epoch
             g["_last_epoch"] = flow_epoch
         # Inherit hostname if we don't have one yet
         if g["host"] is None and flow.get("host"):
