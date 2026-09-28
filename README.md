@@ -11,7 +11,6 @@ AI-powered passive network threat detection designed for **one-way / unidirectio
 ## Architecture
 
 ```text
-ONE-WAY TRAFFIC
                          LIVE NETWORK
                               |
                     +---------+---------+
