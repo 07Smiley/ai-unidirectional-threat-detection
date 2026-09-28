@@ -232,27 +232,39 @@ def test_dashboard_groups_are_sorted_by_threat_score(monkeypatch):
     assert groups[0]["flagged_flows"] == 1
 
 
-def test_dashboard_group_analysis_includes_threat_score(monkeypatch):
+def test_dashboard_group_analysis_includes_threat_score_and_activity_duration(monkeypatch):
     import dashboard
 
     class FakeProvider:
         def get_flows(self):
-            return [{
-                "src_ip": "10.0.0.20",
-                "timestamp": "10:00:00",
-                "timestamp_epoch": 10,
-                "label": "DDOS",
-                "confidence": 0.85,
-                "threat_score": 85.0,
-                "why": ["24 connections", "6 unique sources"],
-            }]
+            return [
+                {
+                    "src_ip": "10.0.0.20",
+                    "timestamp": "10:00:00",
+                    "timestamp_epoch": 10,
+                    "label": "DDOS",
+                    "confidence": 0.85,
+                    "threat_score": 85.0,
+                    "why": ["24 connections", "6 unique sources"],
+                },
+                {
+                    "src_ip": "10.0.0.20",
+                    "timestamp": "10:01:29",
+                    "timestamp_epoch": 99,
+                    "label": "BENIGN",
+                    "confidence": None,
+                    "threat_score": 0.0,
+                    "why": [],
+                },
+            ]
 
     monkeypatch.setattr(dashboard, "_data_provider", FakeProvider())
     analysis = dashboard.get_group_analysis("10.0.0.20")
 
     assert analysis["threat_score"] == 85.0
     assert analysis["flagged_flows"] == 1
-    assert analysis["total_flows"] == 1
+    assert analysis["total_flows"] == 2
+    assert analysis["activity_duration"] == "1m 29s"
 
 
 def test_gemini_status_never_exposes_api_key(monkeypatch):
