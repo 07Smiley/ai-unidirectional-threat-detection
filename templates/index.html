@@ -480,16 +480,46 @@ function fmtPort(p){ return p != null ? p : '—'; }
 function fmtProto(p){ return p || '—'; }
 function fmtPps(p){ return p != null ? p.toLocaleString() : '0'; }
 
+function strongestRuleThreatScore(){
+  return groups.reduce((max, group) => {
+    return Math.max(max, Number(group.threat_score || 0));
+  }, 0);
+}
+
+function renderThreatScoreStat(){
+  const stat = document.querySelector('#statStrip .stat:nth-child(3)');
+  if(!stat) return;
+  const value = stat.querySelector('.value');
+  const sub = stat.querySelector('.sub');
+  if(value) value.textContent = latestThreatScore.toFixed(0)+'%';
+  if(sub){
+    sub.textContent = latestMlPrediction
+      ? 'strongest malicious model confidence'
+      : latestThreatScore > 0
+        ? 'strongest detected threat evidence'
+        : 'waiting for threat evidence';
+  }
+  stat.classList.toggle('flag', latestThreatScore>=RESPONSE_THRESHOLD);
+}
+
 async function loadStats(){
   try{
     const res=await fetch('/api/stats');
     const s=await res.json();
     const total=s.flows_analyzed||0;
     const flagPct=total>0?((s.flagged/total)*100).toFixed(1):'0.0';
+
+    // The global dashboard score is the strongest currently observed
+    // threat evidence: ML confidence when available, otherwise rule-based
+    // source evidence such as DDoS/scan/beaconing. This keeps the headline
+    // score live even when the rule detector fires before packet ML.
+    const latestMlScore = Number((s.latest_ml||{}).score || 0);
+    latestThreatScore = Math.max(latestMlScore, strongestRuleThreatScore());
+
     const strip=[
       {icon:'◈',label:'Flows analyzed',value:total.toLocaleString(),sub:s.flows_analyzed_window||'LIVE FLOW COUNT',cls:''},
       {icon:'⚑',label:'Flagged sources',value:s.flagged||0,sub:(s.flagged_sources||0)+' sources · '+flagPct+'% of flows',cls:'flag'},
-      {icon:'◎',label:'Threat score',value:latestThreatScore.toFixed(0)+'%',sub:latestMlPrediction?'strongest malicious model confidence':'waiting for ML inference',cls:latestThreatScore>=RESPONSE_THRESHOLD?'flag':''}
+      {icon:'◎',label:'Threat score',value:latestThreatScore.toFixed(0)+'%',sub:latestMlPrediction?'strongest malicious model confidence':latestThreatScore>0?'strongest detected threat evidence':'waiting for threat evidence',cls:latestThreatScore>=RESPONSE_THRESHOLD?'flag':''}
     ];
     document.getElementById('statStrip').innerHTML=strip.map(item=>`
       <div class="stat ${item.cls}">
@@ -498,6 +528,7 @@ async function loadStats(){
         <div class="value">${item.value}</div>
         <div class="sub">${item.sub}</div>
       </div>`).join('');
+    updateResponsePanel();
   }catch(e){console.error('[Dashboard] Failed to load stats:',e);}
 }
 
@@ -511,6 +542,11 @@ async function loadGroups(){
     } else {
       groups = [];
     }
+    // Fold the strongest live rule-based source evidence into the headline
+    // score immediately after groups refresh, instead of waiting for ML.
+    latestThreatScore = Math.max(latestThreatScore, strongestRuleThreatScore());
+    renderThreatScoreStat();
+    updateResponsePanel();
     renderGroups();
   }catch(e){
     console.error('[Dashboard] Failed to load groups:', e);
