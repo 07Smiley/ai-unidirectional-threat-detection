@@ -44,6 +44,9 @@ body.light-mode .stat{background:#fff;border-color:var(--line)}
 .stat .value{font-size:37px;line-height:1.05;font-weight:900;margin-top:7px}
 .stat .sub{font-size:11px;color:var(--muted);margin-top:5px}
 .stat.flag .value{color:#ff4c58}.stat.ok .value{color:var(--green)}
+.stat.threat-stat{cursor:pointer}.stat.threat-stat:hover{border-color:#3b9ed0;transform:translateY(-1px)}
+.stat.threat-stat:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.source-row.threat-target{box-shadow:inset 4px 0 0 var(--red),0 0 0 1px rgba(255,71,87,.28);background:rgba(255,71,87,.08)}
 .stat::after{content:"";position:absolute;right:18px;bottom:16px;width:145px;height:34px;opacity:.35;background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(57,189,248,.8) 5px 9px,transparent 9px 13px);clip-path:polygon(0 90%,8% 70%,16% 78%,24% 50%,32% 65%,40% 28%,48% 55%,56% 15%,64% 45%,72% 20%,80% 42%,88% 12%,100% 0,100% 100%,0 100%)}
 .stat:nth-child(2)::after{background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(255,71,87,.9) 5px 9px,transparent 9px 13px)}
 .stat:nth-child(3)::after{background:repeating-linear-gradient(90deg,transparent 0 5px,rgba(255,71,87,.9) 5px 9px,transparent 9px 13px)}
@@ -199,8 +202,104 @@ let liveThreats = 0;
 let liveModelLabel = 'OFFLINE';
 let latestThreatScore = 0;
 let latestMlPrediction = null;
+let latestThreatSource = null;
 let lastPromptedScore = null;
 const ignoredIps = new Set();
+
+// Threat headline state: keep the newest 50 flagged sources, wait 2 seconds
+// for asynchronous ML/rule evidence to settle, then show the strongest source.
+const recentFlaggedSources = new Map();
+let threatDisplayTimer = null;
+const THREAT_DISPLAY_DELAY_MS = 2000;
+const MAX_FLAGGED_SOURCES = 50;
+const ignoredSourceRecords = new Set();
+
+function rememberFlaggedSources(flaggedGroups){
+  const now = Date.now();
+  flaggedGroups.forEach(g => {
+    const id = g.group_id || g.src_ip;
+    if(!id) return;
+    const score = Number(g.threat_score || 0);
+    if(score <= 0) return;
+    const existing = recentFlaggedSources.get(id) || {};
+    recentFlaggedSources.set(id, {
+      ...existing,
+      group_id: id,
+      src_ip: g.src_ip || id,
+      label: g.label || existing.label || 'THREAT',
+      host: g.host || existing.host || null,
+      threat_score: Math.max(Number(existing.threat_score || 0), score),
+      last_seen: g.last_seen || existing.last_seen || '—',
+      last_seen_epoch: Number(g.last_seen_epoch || existing.last_seen_epoch || 0),
+      observed_at: now
+    });
+  });
+
+  // Keep only the 50 most recently observed flagged sources.
+  const keep = [...recentFlaggedSources.values()]
+    .sort((a,b) => (b.last_seen_epoch - a.last_seen_epoch) || (b.observed_at - a.observed_at))
+    .slice(0, MAX_FLAGGED_SOURCES);
+  recentFlaggedSources.clear();
+  keep.forEach(item => recentFlaggedSources.set(item.group_id, item));
+}
+
+function rememberMlThreat(prediction, score){
+  const ip = prediction && (prediction.src_ip || prediction.source_ip);
+  if(!ip || Number(score || 0) <= 0) return;
+  const existing = recentFlaggedSources.get(ip) || {
+    group_id: ip, src_ip: ip, label: 'THREAT', observed_at: Date.now()
+  };
+  const numericScore = Number(score || 0);
+  if(numericScore >= Number(existing.threat_score || 0)){
+    existing.threat_score = numericScore;
+    existing.label = prediction.label || existing.label || 'THREAT';
+  }
+  existing.observed_at = Date.now();
+  recentFlaggedSources.set(ip, existing);
+  const keep=[...recentFlaggedSources.values()]
+    .sort((a,b)=>(Number(b.last_seen_epoch||0)-Number(a.last_seen_epoch||0))||(b.observed_at-a.observed_at))
+    .slice(0,MAX_FLAGGED_SOURCES);
+  recentFlaggedSources.clear();
+  keep.forEach(item=>recentFlaggedSources.set(item.group_id,item));
+}
+
+function scheduleThreatHeadline(){
+  clearTimeout(threatDisplayTimer);
+  threatDisplayTimer=setTimeout(renderDelayedThreatHeadline, THREAT_DISPLAY_DELAY_MS);
+}
+
+function renderDelayedThreatHeadline(){
+  const candidates=[...recentFlaggedSources.values()]
+    .filter(s => Number(s.threat_score || 0) > 0 && !ignoredSourceRecords.has(s.group_id))
+    .sort((a,b)=>Number(b.threat_score||0)-Number(a.threat_score||0));
+
+  const strongest=candidates[0] || null;
+  latestThreatSource=strongest;
+  latestThreatScore=strongest ? Number(strongest.threat_score||0) : 0;
+
+  if(strongest){
+    latestMlPrediction={
+      ...(latestMlPrediction || {}),
+      src_ip: strongest.src_ip,
+      label: strongest.label || 'THREAT',
+      model: strongest.model || (latestMlPrediction && latestMlPrediction.model) || 'UNIDIRECTIONAL ML'
+    };
+  }
+  renderThreatScoreStat();
+  updateResponsePanel();
+}
+
+async function focusThreatSource(){
+  const source=latestThreatSource;
+  if(!source) return;
+  await selectGroup(source.group_id);
+  const row=document.querySelector('.source-row[data-id="'+CSS.escape(source.group_id)+'"]');
+  if(row){
+    row.classList.add('threat-target');
+    row.scrollIntoView({behavior:'smooth',block:'center'});
+    setTimeout(()=>row.classList.remove('threat-target'),1800);
+  }
+}
 const handledResponseIps = new Set();
 let responseActionInFlight = false;
 const RESPONSE_THRESHOLD = 92;
@@ -296,6 +395,8 @@ function connectLiveSocket(){
         if(data.type==='threat_score'){
           if(data.prediction) latestMlPrediction=data.prediction;
           else if(data.source_ip && latestMlPrediction) latestMlPrediction.src_ip=data.source_ip;
+          rememberMlThreat(latestMlPrediction || data, Number(data.score || 0));
+          scheduleThreatHeadline();
           handleThreatScoreUpdate(data.score);
           if(data.response_available && latestThreatScore!==lastPromptedScore){
             lastPromptedScore=latestThreatScore;
@@ -304,6 +405,8 @@ function connectLiveSocket(){
         }
         if(data.type==='ml_prediction' && String(data.label||'').toLowerCase()!=='benign'){
           latestMlPrediction=data;
+          rememberMlThreat(data, Number(data.score || data.threat_score || data.confidence*100 || 0));
+          scheduleThreatHeadline();
         }
         liveThreats++;
         const badge=document.getElementById('sourceCount');
@@ -336,6 +439,9 @@ async function startLive(){
   ignoredIps.clear();
   latestThreatScore=0;
   latestMlPrediction=null;
+  latestThreatSource=null;
+  recentFlaggedSources.clear();
+  clearTimeout(threatDisplayTimer);
   hideThreatModal();
   const select=document.getElementById('interfaceSelect');
   const iface=select.value;
@@ -453,6 +559,17 @@ async function stopLive(){
 
 document.getElementById('liveStart').addEventListener('click',startLive);
 document.getElementById('liveStop').addEventListener('click',stopLive);
+document.getElementById('statStrip').addEventListener('click',(event)=>{
+  const stat=event.target.closest('.stat.threat-stat');
+  if(stat) focusThreatSource();
+});
+document.getElementById('statStrip').addEventListener('keydown',(event)=>{
+  const stat=event.target.closest('.stat.threat-stat');
+  if(stat && (event.key==='Enter' || event.key===' ')){
+    event.preventDefault();
+    focusThreatSource();
+  }
+});
 document.getElementById('liveStop').disabled=true;
 document.getElementById('responseBlock').addEventListener('click',blockCurrentThreat);
 document.getElementById('responseIgnore').addEventListener('click',ignoreCurrentThreat);
@@ -491,15 +608,22 @@ function renderThreatScoreStat(){
   if(!stat) return;
   const value = stat.querySelector('.value');
   const sub = stat.querySelector('.sub');
+  const source = latestThreatSource;
   if(value) value.textContent = latestThreatScore.toFixed(0)+'%';
   if(sub){
-    sub.textContent = latestMlPrediction
-      ? 'strongest malicious model confidence'
+    sub.textContent = source
+      ? (source.label || 'THREAT')+' · '+(source.src_ip || 'unknown source')
       : latestThreatScore > 0
-        ? 'strongest detected threat evidence'
+        ? 'waiting for delayed source aggregation'
         : 'waiting for threat evidence';
   }
   stat.classList.toggle('flag', latestThreatScore>=RESPONSE_THRESHOLD);
+  stat.classList.add('threat-stat');
+  stat.setAttribute('role','button');
+  stat.setAttribute('tabindex','0');
+  stat.setAttribute('aria-label',source
+    ? 'Open strongest flagged source '+source.src_ip+' with threat score '+latestThreatScore.toFixed(0)+' percent'
+    : 'Threat score — no flagged source selected');
 }
 
 async function loadStats(){
@@ -514,12 +638,14 @@ async function loadStats(){
     // source evidence such as DDoS/scan/beaconing. This keeps the headline
     // score live even when the rule detector fires before packet ML.
     const latestMlScore = Number((s.latest_ml||{}).score || 0);
-    latestThreatScore = Math.max(latestMlScore, strongestRuleThreatScore());
+    if(latestMlScore > 0 && latestMlPrediction){
+      rememberMlThreat(latestMlPrediction, latestMlScore);
+    }
 
     const strip=[
       {icon:'◈',label:'Flows analyzed',value:total.toLocaleString(),sub:s.flows_analyzed_window||'LIVE FLOW COUNT',cls:''},
       {icon:'⚑',label:'Flagged sources',value:s.flagged||0,sub:(s.flagged_sources||0)+' sources · '+flagPct+'% of flows',cls:'flag'},
-      {icon:'◎',label:'Threat score',value:latestThreatScore.toFixed(0)+'%',sub:latestMlPrediction?'strongest malicious model confidence':latestThreatScore>0?'strongest detected threat evidence':'waiting for threat evidence',cls:latestThreatScore>=RESPONSE_THRESHOLD?'flag':''}
+      {icon:'◎',label:'Threat score',value:latestThreatScore.toFixed(0)+'%',sub:latestThreatSource?(latestThreatSource.label+' · '+latestThreatSource.src_ip):'waiting for threat evidence',cls:(latestThreatScore>=RESPONSE_THRESHOLD?'flag ':'')+'threat-stat'}
     ];
     document.getElementById('statStrip').innerHTML=strip.map(item=>`
       <div class="stat ${item.cls}">
@@ -542,11 +668,11 @@ async function loadGroups(){
     } else {
       groups = [];
     }
-    // Fold the strongest live rule-based source evidence into the headline
-    // score immediately after groups refresh, instead of waiting for ML.
-    latestThreatScore = Math.max(latestThreatScore, strongestRuleThreatScore());
-    renderThreatScoreStat();
-    updateResponsePanel();
+
+    const flaggedGroups = groups.filter(g => Number(g.threat_score || 0) > 0);
+    rememberFlaggedSources(flaggedGroups);
+    scheduleThreatHeadline();
+
     renderGroups();
   }catch(e){
     console.error('[Dashboard] Failed to load groups:', e);
