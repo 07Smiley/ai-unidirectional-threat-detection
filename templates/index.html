@@ -793,8 +793,7 @@ function renderSourceDetail(id, analysis, logs){
       <div class="detail-metric"><div class="k">Flagged flows</div><div class="v">${flagged}</div></div>
       <div class="detail-metric"><div class="k">Protocol</div><div class="v">${analysis.protocol||'TCP'}</div></div>
       <div class="detail-metric"><div class="k">Top ports</div><div class="v">${(analysis.top_ports||[]).slice(0,5).join(', ')||'—'}</div></div>
-      <div class="detail-metric"><div class="k">First seen</div><div class="v">${analysis.first_seen||'—'}</div></div>
-      <div class="detail-metric"><div class="k">Last seen</div><div class="v">${analysis.last_seen||'—'}</div></div>
+      <div class="detail-metric"><div class="k">Activity duration</div><div class="v">${analysis.activity_duration||'—'}</div></div>
     </div>
     <div class="detail-reasons"><strong>Why flagged?</strong>${reasons.length?reasons.map(x=>'• '+x).join('<br>'):'• Suspicious traffic evidence detected.'}<br>• ML model confidence: ${fmtConf(analysis.confidence)}</div>
     
