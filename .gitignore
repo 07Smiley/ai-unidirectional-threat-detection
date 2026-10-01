@@ -16,9 +16,6 @@ response_actions.jsonl
 chat_history.db
 
 # ---- Secrets / env ----
-.env
-.env.*
-!.env.example
 
 # ---- Python ----
 __pycache__/
@@ -35,6 +32,7 @@ venv/
 .venv/
 env/
 ENV/
+.env
 
 # ---- Flask ----
 instance/

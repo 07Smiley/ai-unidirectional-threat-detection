@@ -1,76 +1,171 @@
 import json
 import os
+import random
 import sqlite3
+import threading
 import time
 import hashlib
 import traceback
+import urllib.request
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
+import pandas as pd
 from dotenv import load_dotenv
 from flask import Flask, render_template, jsonify, request
 from google import genai
 from google.genai import types
-from google.genai.errors import ServerError
+from google.genai.errors import APIError, ServerError
 
-# Load variables from a .env file in the current working directory (if
-# present) into os.environ. This MUST happen before get_gemini_client()
-# reads GEMINI_API_KEY, or the key will never be picked up even if it's
-# sitting right there in .env.
-load_dotenv()
+# Load .env BEFORE anything reads GEMINI_API_KEY / GEMINI_MODEL.
+_ENV_FILE = Path(__file__).resolve().parent / ".env"
+load_dotenv(_ENV_FILE, override=True)  # .env next to this file
+load_dotenv()                          # plus any .env found from the cwd
+
+
+def _load_env_robust():
+    """Fallback loader for .env files python-dotenv chokes on: UTF-8 BOM,
+    UTF-16 (Windows Notepad), `.env.txt`, or a .env in a parent folder.
+    Returns [(path, [variable names found])] — names only, never values."""
+    here = Path(__file__).resolve().parent
+    folders = [here, *list(here.parents)[:2], Path.cwd()]
+    seen, report = set(), []
+    for folder in folders:
+        for name in (".env", ".env.txt", ".env.local", "env"):
+            p = folder / name
+            if not p.is_file() or p in seen:
+                continue
+            seen.add(p)
+            raw = p.read_bytes()
+            enc = "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
+            try:
+                text = raw.decode(enc)
+            except UnicodeDecodeError:
+                report.append((p, ["<unreadable encoding>"]))
+                continue
+            keys = []
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.replace("export ", "").strip().lstrip("\ufeff")
+                v = v.strip().strip("\"'").strip()
+                if k:
+                    keys.append(k)
+                    if v:
+                        os.environ[k] = v
+            report.append((p, keys))
+    return report
+
+
+_ENV_DIAG = _load_env_robust()
+
+
+def _env_diag_text():
+    if not _ENV_DIAG:
+        return (f"No .env file found (looked in {_ENV_FILE.parent}, its parents, and {Path.cwd()}).")
+    return "Env files read: " + "; ".join(
+        f"{p} → variables: {', '.join(keys) or 'none'}" for p, keys in _ENV_DIAG
+    )
 
 app = Flask(__name__)
 
 # =============================================================================
-# GEMINI CLIENT
+# DATA MODE
 #
-# Reads the API key from the GEMINI_API_KEY environment variable — put that
-# in your .env (loaded above via python-dotenv) or export it before running.
-# The client is created once at import time; every chat request reuses it.
+#   DEMO_MODE=auto    (default) fake demo flows while the live sensor is
+#                     stopped; real Zeek flows as soon as you press START LIVE.
+#   DEMO_MODE=always  always serve demo flows (offline Gemini testing).
+#   DEMO_MODE=off     never serve demo flows (real Zeek data only).
 #
-# Kept on gemini-3.5-flash rather than a lighter/faster tier on purpose —
-# this bot is judging DDoS vs benign from log evidence, and flash-lite
-# trades reasoning quality for speed in a way that isn't worth it here.
+# "Live running" is read from the FastAPI sensor at BACKEND_HOST:BACKEND_PORT
+# (/api/live/status), the same API the frontend START/STOP buttons call.
 # =============================================================================
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+DEMO_MODE = os.environ.get("DEMO_MODE", "auto").strip().lower()
+_BACKEND_HOST = os.environ.get("BACKEND_HOST", "127.0.0.1")
+_BACKEND_PORT = os.environ.get("BACKEND_PORT", "8000")
+LIVE_API_URL = f"http://{_BACKEND_HOST}:{_BACKEND_PORT}"
+
+_live_cache = {"t": 0.0, "running": False}
+
+
+def _live_running():
+    """True if the FastAPI live sensor reports running. Cached for 2s."""
+    now = time.time()
+    if now - _live_cache["t"] < 2.0:
+        return _live_cache["running"]
+    running = False
+    try:
+        with urllib.request.urlopen(LIVE_API_URL + "/api/live/status", timeout=0.8) as r:
+            running = bool(json.loads(r.read().decode("utf-8")).get("running"))
+    except Exception:
+        running = False
+    _live_cache["t"] = now
+    _live_cache["running"] = running
+    return running
+
+
+# =============================================================================
+# GEMINI CLIENT
+#
+# Reads GEMINI_API_KEY from the environment (.env loaded above). Model comes
+# from GEMINI_MODEL; default is gemini-3.5-flash. If your .env sets
+# GEMINI_MODEL, that value wins over this default.
+# =============================================================================
+
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 _gemini_client = None
+
+
+def _gemini_key():
+    """GEMINI_API_KEY (or GOOGLE_API_KEY), trimmed of spaces/quotes."""
+    for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        val = (os.environ.get(name) or "").strip().strip("\"'").strip()
+        if val:
+            return val
+    return ""
 
 
 def get_gemini_client():
     global _gemini_client
     if _gemini_client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = _gemini_key()
         if not api_key:
             raise RuntimeError(
-                "GEMINI_API_KEY is not set — add it to your .env or environment."
+                "GEMINI_API_KEY is not set. " + _env_diag_text()
             )
         _gemini_client = genai.Client(api_key=api_key)
     return _gemini_client
 
 
+def _gemini_error_text(err):
+    """Turn a Gemini SDK exception into a message that says what's wrong."""
+    if isinstance(err, ServerError):
+        return "Gemini is temporarily overloaded — please try again in a moment."
+    if isinstance(err, APIError):
+        code = getattr(err, "code", None)
+        msg = str(getattr(err, "message", None) or err)[:240]
+        hint = ""
+        if code == 404:
+            hint = f" Model '{GEMINI_MODEL}' was not found — set GEMINI_MODEL to a valid model id."
+        elif code in (401, 403):
+            hint = " Check GEMINI_API_KEY."
+        elif code == 429:
+            hint = " Quota or rate limit hit."
+        elif code == 400:
+            hint = " Bad request — check the model id and API key."
+        return f"Gemini API error {code}: {msg}{hint}"
+    return f"Couldn't reach Gemini: {type(err).__name__}: {str(err)[:240]}"
+
+
 # =============================================================================
-# CHAT PERSISTENCE (SQLite) — two tables, two different jobs
+# CHAT PERSISTENCE (SQLite)
 #
-#   chat_history  -> the raw Gemini Content history for a source, in the
-#                     exact shape the SDK needs to resume a chat session
-#                     (client.chats.create(..., history=...)). This is what
-#                     gives the MODEL memory across restarts.
-#
-#   chat_display  -> a simple ordered list of {sender, lead, bullets} turns
-#                     for a source, in the exact shape the frontend renders
-#                     as chat bubbles. This is what gives the UI something
-#                     to replay after a page refresh — chat_history alone
-#                     isn't enough for that, because its first turn has the
-#                     raw log-dump/system-prompt text baked in rather than
-#                     the clean question the user actually typed, and its
-#                     model turns are JSON strings rather to be re-parsed
-#                     on every render.
-#
-# No setup needed: sqlite3 is in the Python standard library, and the .db
-# file plus both tables are created automatically on first run at
-# CHAT_DB_PATH (defaults to chat_history.db next to this file).
+#   chat_history  -> raw Gemini Content history per source (model memory).
+#   chat_display  -> clean bubbles per source (UI replay after refresh).
 # =============================================================================
 
 CHAT_DB_PATH = os.environ.get("CHAT_DB_PATH", "chat_history.db")
@@ -100,9 +195,6 @@ def _db():
 
 
 def load_history(group_id):
-    """Return this source's saved conversation as a list of Content objects
-    ready to hand back to the SDK, or None if nothing's been saved yet.
-    """
     conn = _db()
     try:
         row = conn.execute(
@@ -112,12 +204,16 @@ def load_history(group_id):
         conn.close()
     if not row:
         return None
-    raw_turns = json.loads(row[0])
-    return [types.Content.model_validate(turn) for turn in raw_turns]
+    try:
+        raw_turns = json.loads(row[0])
+        return [types.Content.model_validate(turn) for turn in raw_turns]
+    except Exception as e:
+        # Corrupt/incompatible saved history must not break chat forever.
+        print(f"[Chat] Ignoring unreadable saved history for {group_id}: {e}")
+        return None
 
 
 def save_history(group_id, chat):
-    """Persist the chat session's current full history to disk."""
     turns = [c.model_dump(exclude_none=True, mode="json") for c in chat.get_history()]
     conn = _db()
     try:
@@ -137,10 +233,6 @@ def save_history(group_id, chat):
 
 
 def load_display_history(group_id):
-    """Return this source's chat bubbles, oldest first, as a plain list of
-    {"sender": "user"|"bot", "lead": str, "bullets": [str, ...]?} — exactly
-    what the frontend needs to replay the conversation after a refresh.
-    """
     conn = _db()
     try:
         row = conn.execute(
@@ -152,11 +244,6 @@ def load_display_history(group_id):
 
 
 def append_display_turns(group_id, user_message, bot_payload):
-    """Append one user turn and one bot turn to this source's display
-    history. Called once per chat request, regardless of whether the bot's
-    reply was a real answer or an error message — either way it's what the
-    user actually saw, so a refresh should show the same thing.
-    """
     entries = load_display_history(group_id)
     entries.append({"sender": "user", "lead": user_message})
     bot_entry = {"sender": "bot", "lead": bot_payload.get("lead", "")}
@@ -183,24 +270,38 @@ def append_display_turns(group_id, user_message, bot_payload):
 
 # =============================================================================
 # PER-SOURCE CHAT MEMORY
-#
-# One Gemini `chat` session per group_id, kept in _gemini_chats for the life
-# of the process (fast path — no disk I/O for turns already loaded this
-# run), and mirrored to SQLite after every turn so it survives restarts.
-#
-# A source's first-ever question folds the log context + system prompt into
-# that same message rather than sending it as a separate priming round-trip
-# first — one model call instead of two, same context, same accuracy.
 # =============================================================================
 
 _gemini_chats = {}  # group_id -> chat session (in-process cache)
+MAX_FLOWS_IN_PROMPT = 60  # newest flows only; smaller prompt = faster reply
+
+# Speed knobs (override in .env):
+#   GEMINI_MODEL      e.g. gemini-3.1-flash-lite for the fastest replies
+#   GEMINI_THINKING   minimal | low | high | off  (default: minimal)
+#   GEMINI_MAX_OUTPUT reply token cap (default 800)
+GEMINI_THINKING = os.environ.get("GEMINI_THINKING", "minimal").strip().lower()
+GEMINI_MAX_OUTPUT = int(os.environ.get("GEMINI_MAX_OUTPUT", "800"))
+_flags = {"thinking_ok": True}  # flipped off automatically if the model rejects it
+
+
+def _build_config():
+    kwargs = dict(
+        system_instruction=CHAT_SYSTEM_PROMPT
+        + "\n\nBe fast and brief: lead max 2 short sentences, at most 3 bullets, no preamble.",
+        response_mime_type="application/json",
+        temperature=0.2,
+        max_output_tokens=GEMINI_MAX_OUTPUT,
+    )
+    if _flags["thinking_ok"] and GEMINI_THINKING not in ("", "off", "none"):
+        try:
+            kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=GEMINI_THINKING)
+        except Exception:
+            pass  # older SDK without thinking_level
+    return types.GenerateContentConfig(**kwargs)
 
 
 def _send_with_retry(chat, message, max_attempts=3):
-    """Send a message on an existing chat session, retrying transient
-    Gemini server errors with backoff. Returns (raw_text, error).
-    Exactly one of the two is None.
-    """
+    """Returns (raw_text, error). Exactly one is None."""
     last_error = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -210,7 +311,7 @@ def _send_with_retry(chat, message, max_attempts=3):
             last_error = e
             print(f"[Gemini server error, attempt {attempt}/{max_attempts}] {e}")
             if attempt < max_attempts:
-                time.sleep(1.0 * attempt)  # 1s, then 2s
+                time.sleep(1.0 * attempt)
         except Exception as e:
             last_error = e
             print(f"[Gemini call failed] {type(e).__name__}: {e}")
@@ -219,85 +320,30 @@ def _send_with_retry(chat, message, max_attempts=3):
 
 
 def get_or_create_group_chat(group_id, client):
-    """Return (chat, is_new). is_new is True only for a source that has
-    never been talked to before (no in-process session, nothing on disk) —
-    the caller uses that to decide whether this message needs the log
-    context folded in. No network call happens here; opening/resuming a
-    chat session is local, so this never adds latency on its own.
-    """
+    """Return (chat, is_new). No network call happens here."""
     chat = _gemini_chats.get(group_id)
     if chat is not None:
         return chat, False
 
     saved_history = load_history(group_id)
     if saved_history:
-        chat = client.chats.create(model=GEMINI_MODEL, history=saved_history)
+        chat = client.chats.create(model=GEMINI_MODEL, history=saved_history, config=_build_config())
         _gemini_chats[group_id] = chat
         return chat, False
 
-    chat = client.chats.create(model=GEMINI_MODEL)
+    chat = client.chats.create(model=GEMINI_MODEL, config=_build_config())
     _gemini_chats[group_id] = chat
     return chat, True
 
 
 # =============================================================================
-# REAL DATA PROVIDER — replaces the hardcoded SAMPLE_LOGS with live Zeek
-# log ingestion, feature extraction, and rule-based detection results.
-#
-# Architecture:
-#   Zeek logs (conn.log, dns.log, ssl.log)
-#       ↓
-#   read_zeek_log()          — parse TSV to DataFrame
-#       ↓#   create_flow_features()   — derive flow-level features
-#       ↓
-#   detect_scanning / detect_ddos / detect_beaconing  — rule-based detectors
-#       ↓
-#   RealDataProvider         — caches results, maps to dashboard format
-#       ↓
-#   Flask API routes         — serve to existing frontend
-#
-# The provider re-reads Zeek logs when the file modification time changes
-# or the cache TTL (default 5s) expires, ensuring newly appended data is
-# picked up without manual restarts. Detection logic stays in src/detection
-# and is NOT duplicated here.
+# SHARED HELPERS
 # =============================================================================
 
-import pandas as pd
-
-# These imports bring in the existing Phase 1 pipeline — the dashboard
-# consumes their output, never duplicates their logic.
-from src.ingest.pcap_reader import read_zeek_log
-from src.features.flow_features import create_flow_features
-from backend.services import run_rule_detectors
-
-
-# Resolve the project root relative to this file
-_REPO_ROOT = Path(__file__).resolve().parent
-
-# Zeek log directory — configurable via ZEEK_LOG_DIR env var, with
-# sensible fallbacks to the known project locations.
-_ZEEK_LOG_DIR_CANDIDATES = [
-    os.environ.get("ZEEK_LOG_DIR", ""),
-    str(_REPO_ROOT / "data" / "processed" / "zeek" / "live"),
-]
-
-# Cache TTL in seconds — how often to re-check Zeek logs for new data.
-_CACHE_TTL = float(os.environ.get("DASHBOARD_CACHE_TTL", "5"))
-
-
-def _find_zeek_log_dir():
-    """Return the first candidate directory that contains a conn.log file."""
-    for candidate in _ZEEK_LOG_DIR_CANDIDATES:
-        if not candidate:
-            continue
-        p = Path(candidate)
-        if p.is_dir() and (p / "conn.log").exists():
-            return p
-    return None
+DASHBOARD_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 def _safe_float(val, default=0.0):
-    """Convert a value to float, returning default on failure."""
     try:
         f = float(val)
         if pd.isna(f):
@@ -307,8 +353,253 @@ def _safe_float(val, default=0.0):
         return default
 
 
+def _format_timestamp(ts_epoch):
+    """Unix epoch -> local dashboard time (IST)."""
+    try:
+        ts = float(ts_epoch)
+        if pd.isna(ts):
+            return "—"
+        return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(DASHBOARD_TIMEZONE).strftime("%H:%M:%S")
+    except (ValueError, TypeError, OSError):
+        return "—"
+
+
+def _format_activity_duration(seconds):
+    try:
+        total = max(0, int(round(float(seconds))))
+    except (ValueError, TypeError):
+        return "0s"
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def _score_from_severity(label, severity):
+    """Rule detectors give no calibrated probability; derive a 0-100 score
+    from severity only. Benign flows score 0 and have no confidence."""
+    if label == "BENIGN":
+        return 0.0
+    if severity == "high":
+        return 85.0
+    if severity == "medium":
+        return 65.0
+    return 50.0
+
+
+def _make_features(duration, orig_bytes, resp_bytes, total_pkts, packet_rate):
+    return [
+        {"name": "Duration", "value": f"{duration:.3f}s"},
+        {"name": "Orig Bytes", "value": f"{int(orig_bytes)}"},
+        {"name": "Resp Bytes", "value": f"{int(resp_bytes)}"},
+        {"name": "Total Packets", "value": f"{int(total_pkts)}"},
+        {"name": "Packet Rate", "value": f"{packet_rate:.1f} pkt/s"},
+    ]
+
+
+# =============================================================================
+# DEMO DATA PROVIDER — fake but realistic flows for testing the dashboard and
+# Gemini chat without Zeek. Same dict shape as the real provider.
+#
+# Sources (all addresses are reserved documentation / private ranges):
+#   203.0.113.50-52  DDOS         flood against 10.0.0.10:443
+#   203.0.113.77     PORT_SCAN    sweep of 10.0.0.15
+#   198.51.100.23    BEACONING    ~30s heartbeat to 185.199.110.9:8443
+#   192.168.1.44     EXFILTRATION ~50 MB bursts to 45.33.32.156:443
+#   192.168.1.61     DGA          random-looking domain lookups
+#   192.168.1.20/35  benign browsing
+# =============================================================================
+
+class DemoDataProvider:
+    DEMO_LABEL = "DEMO DATA · sample flows (press START LIVE for real traffic)"
+
+    def __init__(self):
+        self._flows = None
+        self._threats = []
+        self._lock = threading.Lock()
+
+    def _build(self):
+        rng = random.Random(1337)
+        now = time.time()
+        flows = []
+        threats = []
+        hostmap = {
+            "10.0.0.10": "shop.example.com",
+            "10.0.0.15": "db-internal.local",
+            "185.199.110.9": "cdn-update.example.net",
+            "45.33.32.156": "files.example-share.io",
+            "8.8.8.8": "dns.google",
+            "142.250.77.14": "www.google.com",
+            "151.101.1.69": "assets.example.org",
+            "140.82.112.3": "github.com",
+            "52.96.108.2": "outlook.office365.com",
+        }
+
+        def add(src, dst, port, proto, ts, dur, opk, rpk, ob, rb, label="BENIGN",
+                severity=None, why=None):
+            total = opk + rpk
+            rate = (total / dur) if dur > 0 else float(total)
+            score = _score_from_severity(label, severity)
+            raw_id = f"demo:{src}:{dst}:{port}:{ts:.3f}"
+            flows.append({
+                "id": "demo_" + hashlib.md5(raw_id.encode()).hexdigest()[:8],
+                "src_ip": src,
+                "host": hostmap.get(dst),
+                "timestamp": _format_timestamp(ts),
+                "timestamp_epoch": ts,
+                "dst_ip": dst,
+                "dst_port": port,
+                "protocol": proto,
+                "confidence": (score / 100.0) if label != "BENIGN" else None,
+                "threat_score": score,
+                "label": label,
+                "packets_per_sec": round(rate, 1),
+                "packets": int(total),
+                "why": list(why or []),
+                "features": _make_features(dur, ob, rb, total, rate),
+            })
+
+        # --- DDoS: three attacker sources hammering one destination ---------
+        for n, src in enumerate(["203.0.113.50", "203.0.113.51", "203.0.113.52"]):
+            for i in range(14):
+                add(src, "10.0.0.10", 443, "TCP",
+                    now - 240 + i * 0.6 + n * 0.2,
+                    rng.uniform(0.005, 0.05), rng.randint(1, 3), 0,
+                    rng.randint(40, 70), 0,
+                    "DDOS", "high",
+                    ["Destination received 4820 connections from 37 unique sources"])
+        threats.append({"type": "possible_ddos", "dst_ip": "10.0.0.10",
+                        "connection_count": 4820, "unique_sources": 37, "severity": "high"})
+
+        # --- Port scan -------------------------------------------------------
+        scan_ports = [21, 22, 23, 25, 53, 80, 110, 139, 143, 443, 445, 3306, 3389, 5432, 8080]
+        for i, port in enumerate(scan_ports * 2):
+            add("203.0.113.77", "10.0.0.15", port, "TCP",
+                now - 200 + i * 0.4, rng.uniform(0.001, 0.02), 1, rng.choice([0, 1]),
+                rng.randint(0, 60), 0,
+                "PORT_SCAN", "medium",
+                [f"Source contacted {len(scan_ports)} unique ports on 10.0.0.15",
+                 f"{len(scan_ports) * 2} connections in this src→dst pair"])
+        threats.append({"type": "possible_port_scan", "src_ip": "203.0.113.77",
+                        "dst_ip": "10.0.0.15", "unique_destination_ports": len(scan_ports),
+                        "connection_count": len(scan_ports) * 2, "severity": "medium"})
+
+        # --- Beaconing -------------------------------------------------------
+        for i in range(14):
+            add("198.51.100.23", "185.199.110.9", 8443, "TCP",
+                now - 420 + i * 30 + rng.uniform(-0.8, 0.8),
+                rng.uniform(0.1, 0.4), 4, 3, rng.randint(180, 260), rng.randint(90, 140),
+                "BEACONING", "medium",
+                ["14 repeated connections from this source to 185.199.110.9",
+                 "Average interval between connections: 30.04s"])
+        threats.append({"type": "possible_beaconing", "src_ip": "198.51.100.23",
+                        "dst_ip": "185.199.110.9", "connection_count": 14,
+                        "average_interval": 30.04, "severity": "medium"})
+
+        # --- Exfiltration ----------------------------------------------------
+        for i in range(5):
+            ob = rng.randint(45_000_000, 55_000_000)
+            add("192.168.1.44", "45.33.32.156", 443, "TCP",
+                now - 360 + i * 55, rng.uniform(38, 52), 36000, 2400,
+                ob, rng.randint(40_000, 90_000),
+                "EXFILTRATION", "high",
+                [f"Large outbound transfer: {ob} bytes sent",
+                 "Outbound ratio: 0.99"])
+        threats.append({"type": "possible_exfiltration", "src_ip": "192.168.1.44",
+                        "dst_ip": "45.33.32.156", "outbound_bytes": 250_000_000,
+                        "outbound_ratio": 0.99, "severity": "high"})
+
+        # --- DGA-looking DNS -------------------------------------------------
+        for i, domain in enumerate(["xk3jq9vz1w.top", "qp7zr2mdl0c.xyz", "vb8wn4tys6h.top"]):
+            add("192.168.1.61", "8.8.8.8", 53, "UDP",
+                now - 150 + i * 20, 0.04, 1, 1, 70, 120,
+                "DGA", "medium",
+                [f"Suspicious domain queried: {domain}"])
+        threats.append({"type": "possible_dga", "src_ip": "192.168.1.61",
+                        "dst_ip": "8.8.8.8", "domain": "xk3jq9vz1w.top", "severity": "medium"})
+
+        # --- Benign browsing -------------------------------------------------
+        benign_plan = [
+            ("192.168.1.20", ["142.250.77.14", "151.101.1.69"], 443),
+            ("192.168.1.35", ["140.82.112.3", "52.96.108.2"], 443),
+        ]
+        for src, dsts, port in benign_plan:
+            for i in range(10):
+                pk = rng.randint(8, 120)
+                add(src, rng.choice(dsts), port, "TCP",
+                    now - 500 + i * 45 + rng.uniform(0, 20),
+                    rng.uniform(0.2, 6.0), pk, pk + rng.randint(0, 30),
+                    rng.randint(500, 9000), rng.randint(2000, 90000))
+
+        self._flows = flows
+        self._threats = threats
+
+    def _ensure(self):
+        with self._lock:
+            if self._flows is None:
+                self._build()
+
+    def get_flows(self):
+        self._ensure()
+        return self._flows
+
+    def get_threats(self):
+        self._ensure()
+        return self._threats
+
+    def get_error(self):
+        return None
+
+    def get_conn_log_path(self):
+        return self.DEMO_LABEL
+
+    def get_zeek_dir(self):
+        return None
+
+
+_demo_provider = DemoDataProvider()
+
+
+# =============================================================================
+# REAL DATA PROVIDER — Zeek logs -> features -> rule detectors -> dashboard
+# format. Detection logic stays in src/ and backend/ and is NOT duplicated.
+# =============================================================================
+
+try:
+    from src.ingest.pcap_reader import read_zeek_log
+    from src.features.flow_features import create_flow_features
+    from backend.services import run_rule_detectors
+    _PIPELINE_ERROR = None
+except Exception as _imp_err:  # demo mode still works without the pipeline
+    read_zeek_log = create_flow_features = run_rule_detectors = None
+    _PIPELINE_ERROR = f"Detection pipeline import failed: {type(_imp_err).__name__}: {_imp_err}"
+    print(f"[Dashboard] {_PIPELINE_ERROR}")
+
+_REPO_ROOT = Path(__file__).resolve().parent
+
+_ZEEK_LOG_DIR_CANDIDATES = [
+    os.environ.get("ZEEK_LOG_DIR", ""),
+    str(_REPO_ROOT / "data" / "processed" / "zeek" / "live"),
+]
+
+_CACHE_TTL = float(os.environ.get("DASHBOARD_CACHE_TTL", "5"))
+
+
+def _find_zeek_log_dir():
+    for candidate in _ZEEK_LOG_DIR_CANDIDATES:
+        if not candidate:
+            continue
+        p = Path(candidate)
+        if p.is_dir() and (p / "conn.log").exists():
+            return p
+    return None
+
+
 def _threat_matches_flow(threat, src_ip, dst_ip, dst_port, flow_ts):
-    """Match a detector alert to the specific Zeek flow it actually describes."""
+    """Match a detector alert to the specific Zeek flow it describes."""
     t_src = threat.get("src_ip", "")
     t_dst = threat.get("dst_ip", "")
     ttype = threat.get("type", "")
@@ -346,77 +637,31 @@ def _threat_matches_flow(threat, src_ip, dst_ip, dst_port, flow_ts):
     return False
 
 
-DASHBOARD_TIMEZONE = ZoneInfo("Asia/Kolkata")
-
-
-def _format_timestamp(ts_epoch):
-    """Convert a Unix epoch timestamp to local dashboard time (IST)."""
-    try:
-        ts = float(ts_epoch)
-        if pd.isna(ts):
-            return "—"
-        return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(DASHBOARD_TIMEZONE).strftime("%H:%M:%S")
-    except (ValueError, TypeError, OSError):
-        return "—"
-
-
-def _format_iso_timestamp(ts_epoch):
-    """Convert a Unix epoch timestamp to ISO 8601 for sorting."""
-    try:
-        ts = float(ts_epoch)
-        if pd.isna(ts):
-            return ""
-        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
-    except (ValueError, TypeError, OSError):
-        return ""
-
-
-def _format_activity_duration(seconds):
-    """Format elapsed source activity as a compact human-readable duration."""
-    try:
-        total = max(0, int(round(float(seconds))))
-    except (ValueError, TypeError):
-        return "0s"
-
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-
-    if hours:
-        return f"{hours}h {minutes}m"
-    if minutes:
-        return f"{minutes}m {secs}s"
-    return f"{secs}s"
-
-
 class RealDataProvider:
-    """Reads Zeek logs, runs the Phase 1 detection pipeline, and caches
-    the results. The cache is invalidated when the conn.log file's mtime
-    changes or the TTL expires.
-    """
+    """Reads Zeek logs, runs the detection pipeline, caches the results.
+    Cache refreshes when conn.log's mtime changes or the TTL expires."""
 
     def __init__(self):
-        self._flows = []          # list of dashboard-format flow dicts
-        self._threats = []        # list of raw detector result dicts
-        self._flow_df = None      # the raw feature DataFrame
+        self._flows = []
+        self._threats = []
+        self._flow_df = None
         self._conn_log_path = None
         self._last_mtime = 0
         self._last_refresh = 0
-        self._last_error = None   # string describing last load error, or None
-        self._hostname_map = {}   # dst_ip -> hostname from DNS/SSL logs
+        self._last_error = None
+        self._hostname_map = {}
         self._zeek_dir = None
+        self._lock = threading.Lock()
 
     def _should_refresh(self):
-        """Return True if the cached data is stale."""
         now = time.time()
         if now - self._last_refresh < _CACHE_TTL:
             return False
 
         zeek_dir = _find_zeek_log_dir()
         if zeek_dir is None:
-            # No Zeek logs found — if we had data before, keep it;
-            # if not, report the error on next access.
             if not self._flows:
-                self._last_error = "No Zeek conn.log found in any search path."
+                self._last_error = "Waiting for Zeek logs — no conn.log found yet."
             return False
 
         conn_log = zeek_dir / "conn.log"
@@ -428,17 +673,13 @@ class RealDataProvider:
         if current_mtime != self._last_mtime or self._zeek_dir != zeek_dir:
             return True
 
-        # TTL passed but file hasn't changed — update timestamp, skip reload
         self._last_refresh = now
         return False
 
     def _load_hostname_map(self, zeek_dir):
-        """Build a mapping from destination IP → hostname using DNS and
-        SSL log files, if available. Does NOT fabricate hostnames.
-        """
+        """dst IP -> hostname from DNS/SSL logs. Never fabricates names."""
         hostname_map = {}
 
-        # Try DNS log first (query → answers contain IPs)
         dns_log = zeek_dir / "dns.log"
         if dns_log.exists():
             try:
@@ -448,16 +689,13 @@ class RealDataProvider:
                         query = row.get("query", "")
                         answers = str(row.get("answers", ""))
                         if query and answers and answers != "-":
-                            # answers is comma-separated; map each IP → query domain
                             for answer in answers.split(","):
                                 answer = answer.strip()
-                                # Only map if it looks like an IP address
                                 if answer and answer[0].isdigit():
                                     hostname_map[answer] = query
             except Exception as e:
                 print(f"[Dashboard] Warning: Could not parse DNS log: {e}")
 
-        # Also try SSL log (server_name field maps to dst IP)
         ssl_log = zeek_dir / "ssl.log"
         if ssl_log.exists():
             try:
@@ -474,10 +712,14 @@ class RealDataProvider:
         return hostname_map
 
     def refresh(self):
-        """Reload Zeek logs and re-run the detection pipeline."""
+        if _PIPELINE_ERROR:
+            self._last_error = _PIPELINE_ERROR
+            self._last_refresh = time.time()
+            return
+
         zeek_dir = _find_zeek_log_dir()
         if zeek_dir is None:
-            self._last_error = "No Zeek conn.log found in any search path."
+            self._last_error = "Waiting for Zeek logs — no conn.log found yet."
             self._last_refresh = time.time()
             return
 
@@ -486,17 +728,12 @@ class RealDataProvider:
             self._conn_log_path = conn_log
             self._zeek_dir = zeek_dir
 
-            # 1) Read connection log and extract flow features
             zeek_df = read_zeek_log(conn_log)
             flow_df = create_flow_features(zeek_df)
             self._flow_df = flow_df
 
-            # 2) Load hostname mapping from DNS/SSL logs
             self._hostname_map = self._load_hostname_map(zeek_dir)
 
-            # 3) Run the shared offline/Zeek detector orchestration.
-            # The Flask UI is presentation-only; detector selection and
-            # thresholds live in backend.services.
             self._threats = run_rule_detectors(
                 flow_df,
                 conn_log=conn_log,
@@ -504,16 +741,6 @@ class RealDataProvider:
             )
             threats = self._threats
 
-            # 4) Build a set of "involved" source IPs from threat results
-            threat_src_ips = set()
-            threat_dst_ips = set()
-            for t in threats:
-                if t.get("src_ip"):
-                    threat_src_ips.add(t["src_ip"])
-                if t.get("dst_ip"):
-                    threat_dst_ips.add(t["dst_ip"])
-
-            # 5) Convert each flow row to the dashboard format
             flows = []
             for idx, row in flow_df.iterrows():
                 src_ip = str(row.get("id.orig_h", ""))
@@ -522,31 +749,21 @@ class RealDataProvider:
                 proto = str(row.get("proto", "")).upper()
                 ts = row.get("ts")
                 duration = _safe_float(row.get("duration"), 0.0)
-                orig_pkts = _safe_float(row.get("orig_pkts"), 0)
-                resp_pkts = _safe_float(row.get("resp_pkts"), 0)
                 total_pkts = _safe_float(row.get("total_packets"), 0)
                 packet_rate = _safe_float(row.get("packet_rate"), 0)
                 orig_bytes = _safe_float(row.get("orig_bytes"), 0)
                 resp_bytes = _safe_float(row.get("resp_bytes"), 0)
 
-                # Determine label from threat results involving this flow
                 label = "BENIGN"
                 why = []
-                threat_type = None
                 severity = None
 
                 for t in threats:
-                    matched = _threat_matches_flow(
-                        t, src_ip, dst_ip, dst_port, ts
-                    )
-
-                    if matched:
+                    if _threat_matches_flow(t, src_ip, dst_ip, dst_port, ts):
                         ttype = t.get("type", "")
                         t_dst = t.get("dst_ip", "")
                         label = ttype.replace("possible_", "").upper()
-                        threat_type = ttype
                         severity = t.get("severity", "medium")
-                        # Build "why" reasons from the threat details
                         if ttype == "possible_port_scan":
                             why.append(f"Source contacted {t.get('unique_destination_ports', '?')} unique ports on {t_dst}")
                             why.append(f"{t.get('connection_count', '?')} connections in this src→dst pair")
@@ -562,33 +779,20 @@ class RealDataProvider:
                             why.append(f"Outbound ratio: {t.get('outbound_ratio', '?')}")
                         elif ttype == "possible_dga":
                             why.append(f"Suspicious domain queried: {t.get('domain', '?')}")
-                        break  # Use first matching threat
+                        break
 
-                # Look up hostname from DNS/SSL mapping
                 host = self._hostname_map.get(dst_ip)
 
-                # Build flow ID from Zeek UID if available, else hash
+                # Flow id: Zeek UID when present, else a stable hash.
                 uid = row.get("uid", "")
-                if uid and str(uid) != "-" and not pd.isna(uid) if isinstance(uid, float) else uid:
-                    flow_id = str(uid)
+                if isinstance(uid, str) and uid and uid != "-":
+                    flow_id = uid
                 else:
                     raw_id = f"{src_ip}:{dst_ip}:{dst_port}:{ts}"
                     flow_id = "fl_" + hashlib.md5(raw_id.encode()).hexdigest()[:8]
 
-                # Rule detectors do not emit calibrated probabilities. Keep
-                # their evidence as an explicitly named 0-100 threat score
-                # derived only from severity; never present it as ML certainty.
-                if label != "BENIGN":
-                    if severity == "high":
-                        threat_score = 85.0
-                    elif severity == "medium":
-                        threat_score = 65.0
-                    else:
-                        threat_score = 50.0
-                    confidence = threat_score / 100.0
-                else:
-                    threat_score = 0.0
-                    confidence = None
+                threat_score = _score_from_severity(label, severity)
+                confidence = (threat_score / 100.0) if label != "BENIGN" else None
 
                 try:
                     dst_port_int = int(float(dst_port)) if dst_port and str(dst_port) != "-" and not (isinstance(dst_port, float) and pd.isna(dst_port)) else None
@@ -608,14 +812,9 @@ class RealDataProvider:
                     "threat_score": threat_score,
                     "label": label,
                     "packets_per_sec": round(packet_rate, 1),
+                    "packets": int(total_pkts),
                     "why": why,
-                    "features": [
-                        {"name": "Duration", "value": f"{duration:.3f}s"},
-                        {"name": "Orig Bytes", "value": f"{int(orig_bytes)}"},
-                        {"name": "Resp Bytes", "value": f"{int(resp_bytes)}"},
-                        {"name": "Total Packets", "value": f"{int(total_pkts)}"},
-                        {"name": "Packet Rate", "value": f"{packet_rate:.1f} pkt/s"},
-                    ],
+                    "features": _make_features(duration, orig_bytes, resp_bytes, total_pkts, packet_rate),
                 })
 
             self._flows = flows
@@ -634,49 +833,55 @@ class RealDataProvider:
             traceback.print_exc()
 
     def _ensure_fresh(self):
-        """Refresh if the data is stale."""
-        if self._should_refresh() or not self._flows:
-            self.refresh()
+        with self._lock:
+            stale_empty = (not self._flows) and (time.time() - self._last_refresh >= _CACHE_TTL)
+            if self._should_refresh() or stale_empty:
+                self.refresh()
 
     def get_flows(self):
-        """Return all dashboard-format flow dicts, refreshing if needed."""
         self._ensure_fresh()
         return self._flows
 
     def get_threats(self):
-        """Return raw detector results."""
         self._ensure_fresh()
         return self._threats
 
     def get_error(self):
-        """Return the last error string, or None if everything is OK."""
         self._ensure_fresh()
         return self._last_error
 
     def get_conn_log_path(self):
-        """Return the path to the active conn.log, or None."""
         self._ensure_fresh()
         return self._conn_log_path
 
     def get_zeek_dir(self):
-        """Return the active Zeek log directory, or None."""
         self._ensure_fresh()
         return self._zeek_dir
 
 
-# Global singleton — created once, shared by all routes.
 _data_provider = RealDataProvider()
 
 
+def _src():
+    """Pick the active provider: demo flows until START LIVE, then real."""
+    if DEMO_MODE == "always":
+        return _demo_provider
+    if DEMO_MODE == "off":
+        return _data_provider
+    return _data_provider if _live_running() else _demo_provider
+
+
+def _mode_name(provider):
+    return "demo" if provider is _demo_provider else "live"
+
+
 # =============================================================================
-# DATA FUNCTIONS — same signatures as before, now backed by real data.
+# DATA FUNCTIONS
 # =============================================================================
 
 def get_groups():
-    """One row per source (src_ip [+ host]), aggregated from the real flow logs.
-    Replaces the old SAMPLE_LOGS-based implementation.
-    """
-    flows = _data_provider.get_flows()
+    """One row per source (src_ip), aggregated from the active flow set."""
+    flows = _src().get_flows()
     groups = {}
     for flow in flows:
         key = flow["src_ip"]
@@ -694,7 +899,6 @@ def get_groups():
             "_last_epoch": flow.get("timestamp_epoch", 0),
         })
         g["request_count"] += 1
-        # A source score is the strongest observed flow score for that source.
         flow_score = float(flow.get("threat_score", 0.0) or 0.0)
         if flow_score > g["threat_score"]:
             g["threat_score"] = flow_score
@@ -705,23 +909,19 @@ def get_groups():
         if flow["confidence"] is not None:
             if g["confidence"] is None or flow["confidence"] > g["confidence"]:
                 g["confidence"] = flow["confidence"]
-        # Track the latest timestamp
         flow_epoch = flow.get("timestamp_epoch", 0)
         if flow_epoch > g["_last_epoch"]:
             g["last_seen"] = flow["timestamp"]
             g["last_seen_epoch"] = flow_epoch
             g["_last_epoch"] = flow_epoch
-        # Inherit hostname if we don't have one yet
         if g["host"] is None and flow.get("host"):
             g["host"] = flow["host"]
 
-    # Clean up internal fields and sort — flagged sources first, then by count
     result = []
     for g in groups.values():
         del g["_last_epoch"]
         result.append(g)
 
-    # Highest threat score first. Benign sources naturally fall to the bottom.
     return sorted(result, key=lambda g: (
         -g["threat_score"],
         -(g["confidence"] or 0),
@@ -731,8 +931,8 @@ def get_groups():
 
 
 def get_group_logs(group_id):
-    """All raw flows for this one source, newest first."""
-    flows = _data_provider.get_flows()
+    """All raw flows for one source, newest first."""
+    flows = _src().get_flows()
     source_flows = [f for f in flows if f["src_ip"] == group_id]
     return sorted(
         source_flows,
@@ -742,7 +942,7 @@ def get_group_logs(group_id):
 
 
 def get_group_analysis(group_id):
-    """Build the source-detail evidence shown in the SOC dashboard."""
+    """Source-detail evidence shown in the dashboard."""
     logs = get_group_logs(group_id)
     if not logs:
         return None
@@ -765,8 +965,6 @@ def get_group_analysis(group_id):
             if port not in ports:
                 ports.append(port)
 
-    # get_group_logs() is intentionally newest-first for the flow table.
-    # First/last seen must therefore be derived from epoch time, not list order.
     timed_logs = [
         l for l in logs
         if l.get("timestamp_epoch") is not None
@@ -778,6 +976,7 @@ def get_group_analysis(group_id):
         activity_duration = _format_activity_duration(last_epoch - first_epoch)
     else:
         activity_duration = "—"
+
     reasons = []
     seen_reasons = set()
     for l in flagged:
@@ -820,81 +1019,202 @@ def get_group_analysis(group_id):
         "top_flow": logs[0],
     }
 
-CHAT_SYSTEM_PROMPT = """You are Shakalaka's per-source flow analyst. You are given ONLY the raw \
-logged flows for a single traffic source (never any other source's data) as JSON, plus a \
-question from a security analyst. Answer using only what's in the provided flows — never \
-invent flow ids, ports, or numbers that aren't present in the data. Remember earlier turns in \
-this conversation and use them for context on follow-up questions (e.g. "the one you just \
-mentioned", "that flow", "what about the other one").
 
-Respond with ONLY a JSON object, no markdown fences, no commentary outside the JSON, in \
-exactly this shape:
-{"lead": "<one or two sentence answer>", "bullets": ["<optional supporting point>", ...]}
+CHAT_SYSTEM_PROMPT = """You are a cybersecurity flow-analysis assistant for a network monitoring dashboard.
 
-"bullets" is optional — omit it (or use an empty list) when the answer doesn't need supporting \
-points. Keep "lead" concise and specific to the question asked. Every reply must follow that \
-exact JSON shape."""
+Your job is to analyze ONLY the network flow/log data provided to you.
+
+Explain the result in very simple English, like you are explaining it to a 10-year-old, but keep it professional. Do NOT use complicated cybersecurity words unless absolutely necessary. If you use a technical term, explain it in simple words.
+
+Always give your answer in this exact structure:
+
+### 1. What Happened?
+
+Briefly explain what happened in the network.
+
+Mention:
+
+* What type of activity was detected
+* Which system/flow was involved, if available
+* Whether the activity looks normal or suspicious
+
+### 2. When Did It Happen?
+
+Give the exact date and time from the provided data if available.
+
+If a timestamp is not available, say:
+"Exact time is not available in the provided data."
+
+Do NOT make up a time.
+
+### 3. What Was Seen?
+
+Explain the important signs in simple language.
+
+For example:
+
+* A very large amount of traffic appeared
+* Many connections happened in a short period
+* The traffic pattern suddenly changed
+* One system was sending much more traffic than usual
+
+Use actual values from the data whenever available.
+
+### 4. What Does It Mean?
+
+Explain what the activity means in simple words.
+
+Example:
+"This looks like a DDoS attack because a very large amount of traffic was sent toward the system in a short period of time."
+
+Do not exaggerate or claim something is definitely an attack unless the provided detection result supports it.
+
+### 5. How Serious Is It?
+
+Use only one of:
+
+* Low
+* Medium
+* High
+* Critical
+
+Give one short reason for the severity.
+
+### 6. What Should Be Done?
+
+Give 2–4 simple actions.
+
+Examples:
+
+* Check the affected system
+* Block or limit suspicious traffic if appropriate
+* Check whether the traffic is still happening
+* Review nearby network activity
+* Inform the network/security team
+
+Keep recommendations practical and short.
+
+### 7. One-Line Summary
+
+End with one simple sentence:
+
+"At [time], the system detected [activity], which appears to be [normal/suspicious/attack type]."
+
+IMPORTANT RULES:
+
+* Use only information present in the supplied flow/log data.
+* Never invent IP addresses, timestamps, ports, attack details, or statistics.
+* Do not invent missing information.
+* Do not assume an attack happened just because traffic is unusual.
+* Clearly distinguish between "detected", "suspicious", and "confirmed".
+* Keep the explanation short and easy to understand.
+* Prefer plain English over technical terminology.
+* Do not give a long lecture about cybersecurity.
+* Do not explain how to perform an attack.
+* Focus on what happened, when it happened, what was observed, what it means, and what the operator should do.
+* If the data is insufficient to determine something, explicitly say that the information is not available.
+
+The final response should look clean and readable in a dashboard.
+"""
+
+
+def _source_summary(group_id):
+    a = get_group_analysis(group_id) or {}
+    keys = ("label", "threat_score", "total_flows", "flagged_flows",
+            "protocol", "top_ports", "activity_duration")
+    data = {k: a.get(k) for k in keys}
+    data["reasons"] = (a.get("bullets") or [])[:5]
+    return json.dumps(data, separators=(",", ":"))
+
+
+def _compact_flows(logs):
+    """Flows as compact rows instead of pretty-printed dicts — roughly a
+    5-10x smaller prompt, which is the main cost of the first reply."""
+    rows = []
+    for f in logs[:MAX_FLOWS_IN_PROMPT]:
+        feat = {x["name"]: x["value"] for x in f.get("features", [])}
+        rows.append([
+            f["id"], f["timestamp"], f["dst_ip"], f["dst_port"], f["protocol"],
+            f.get("packets"), f["packets_per_sec"],
+            feat.get("Orig Bytes"), feat.get("Resp Bytes"),
+            f["label"], f["threat_score"],
+        ])
+    head = "columns: [id,time,dst,port,proto,pkts,pps,orig_bytes,resp_bytes,label,score]"
+    if len(logs) > len(rows):
+        head += f" (newest {len(rows)} of {len(logs)} flows)"
+    return head + "\n" + json.dumps(rows, separators=(",", ":"))
 
 
 def answer_group_chat(group_id, message):
-    """Answer a follow-up question using ONLY this source's own logs, with
-    memory of earlier turns — resumed from SQLite if the server restarted
-    since the last question about this source.
+    """Answer a question using ONLY this source's own flows, with memory of
+    earlier turns (resumed from SQLite after a restart).
 
-    For a source's first-ever question, the log context and system prompt
-    are folded into this same call rather than sent as a separate priming
-    round-trip first — one model call instead of two, no context lost.
+    Returns (payload, ok). On failure payload is {"error": "<why>"} and ok
+    is False, so the route can return a non-200 and skip persisting it.
     """
     logs = get_group_logs(group_id)
     if not logs:
-        return {"lead": "No logged flows for this source."}
+        return {"error": "No logged flows for this source."}, False
 
     try:
         client = get_gemini_client()
     except RuntimeError as e:
-        # GEMINI_API_KEY missing — surfaced directly so it's obvious in the UI.
         print(f"[Gemini config error] {e}")
-        return {"lead": str(e)}
+        return {"error": str(e)}, False
 
     try:
         chat, is_new = get_or_create_group_chat(group_id, client)
     except Exception as e:
         print(f"[Gemini session open failed] {type(e).__name__}: {e}")
-        return {"lead": "Couldn't reach Gemini right now — try again in a moment."}
+        return {"error": _gemini_error_text(e)}, False
 
-    if is_new:
-        outgoing = (
-            f"{CHAT_SYSTEM_PROMPT}\n\n"
-            f"Flows for source {group_id}:\n{json.dumps(logs, indent=2)}\n\n"
-            f"Question: {message}\n\n"
-            f"(Respond with ONLY the JSON object as instructed.)"
-        )
-    else:
-        outgoing = f"{message}\n\n(Respond with ONLY the JSON object as instructed.)"
+    def build_outgoing(first):
+        if first:
+            return (
+                f"Source {group_id} summary: {_source_summary(group_id)}\n"
+                f"Flows (newest first):\n{_compact_flows(logs)}\n\n"
+                f"Question: {message}"
+            )
+        return message
 
-    raw, err = _send_with_retry(chat, outgoing)
-    if raw is None:
-        # Drop the broken in-process session so the next question resumes
-        # from the last good state saved on disk instead of retrying a
-        # chat that's in a bad state.
+    raw, err = _send_with_retry(chat, build_outgoing(is_new))
+
+    # If the model rejects the thinking setting, switch it off once and retry.
+    if (
+        raw is None
+        and _flags["thinking_ok"]
+        and isinstance(err, APIError)
+        and getattr(err, "code", None) == 400
+        and "think" in str(err).lower()
+    ):
+        print("[Gemini] thinking_level rejected by this model — retrying without it")
+        _flags["thinking_ok"] = False
         _gemini_chats.pop(group_id, None)
-        if isinstance(err, ServerError):
-            return {"lead": "Gemini is temporarily overloaded — please try again in a moment."}
-        return {"lead": "Couldn't reach Gemini right now — try again in a moment."}
+        try:
+            chat, is_new = get_or_create_group_chat(group_id, client)
+        except Exception as e:
+            return {"error": _gemini_error_text(e)}, False
+        raw, err = _send_with_retry(chat, build_outgoing(is_new))
 
-    # Successful turn — persist the updated conversation immediately so it
-    # survives a restart even if the very next request never happens.
+    if raw is None:
+        # Drop the in-process session; next question resumes from disk.
+        _gemini_chats.pop(group_id, None)
+        return {"error": _gemini_error_text(err)}, False
+
     save_history(group_id, chat)
 
     try:
-        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        parsed = json.loads(raw)
+        cleaned = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(cleaned)
         lead = parsed.get("lead") or "I couldn't find a clear answer in this source's logs."
         bullets = parsed.get("bullets") or None
-        return {"lead": lead, "bullets": bullets} if bullets else {"lead": lead}
+        return ({"lead": lead, "bullets": bullets} if bullets else {"lead": lead}), True
     except (json.JSONDecodeError, AttributeError) as e:
-        print(f"[Gemini parse error] {e}")
-        return {"lead": "Got a response I couldn't parse — try rephrasing the question."}
+        print(f"[Gemini parse error] {e} | raw: {raw[:300]!r}")
+        # Model answered but not as JSON — show its text rather than failing.
+        if raw:
+            return {"lead": raw[:1200]}, True
+        return {"error": "Gemini returned an empty reply — try rephrasing."}, False
 
 
 # =============================================================================
@@ -903,35 +1223,35 @@ def answer_group_chat(group_id, message):
 
 @app.route("/")
 def home():
-    backend_host = os.environ.get("BACKEND_HOST", "127.0.0.1")
-    backend_port = os.environ.get("BACKEND_PORT", "8000")
-    live_api = f"http://{backend_host}:{backend_port}"
-    return render_template("index.html", live_api=live_api)
+    return render_template("index.html", live_api=LIVE_API_URL)
 
 
 @app.route("/api/gemini/status")
 def api_gemini_status():
     return jsonify({
-        "configured": bool(os.environ.get("GEMINI_API_KEY")),
+        "configured": bool(_gemini_key()),
         "model": GEMINI_MODEL,
     })
 
 
 @app.route("/api/stats")
 def api_stats():
-    error = _data_provider.get_error()
+    provider = _src()
+    mode = _mode_name(provider)
+    error = provider.get_error()
     if error:
         return jsonify({
             "flows_analyzed": 0,
-            "flows_analyzed_window": f"Error: {error}",
+            "flows_analyzed_window": error,
             "flagged": 0,
             "flagged_sources": 0,
             "avg_confidence": 0.0,
             "model": "Rule-Based Engine",
+            "mode": mode,
             "error": error,
         })
 
-    flows = _data_provider.get_flows()
+    flows = provider.get_flows()
     flagged_flows = [f for f in flows if f["label"] != "BENIGN"]
     flagged_with_conf = [f for f in flagged_flows if f.get("confidence") is not None]
     avg_conf = (
@@ -945,7 +1265,7 @@ def api_stats():
     groups = get_groups()
     flagged_sources = len([g for g in groups if g["threat_score"] > 0])
 
-    conn_log = _data_provider.get_conn_log_path()
+    conn_log = provider.get_conn_log_path()
     window = str(conn_log) if conn_log else "Unknown"
 
     return jsonify({
@@ -956,22 +1276,22 @@ def api_stats():
         "avg_confidence": round(avg_conf, 4),
         "max_threat_score": round(max_threat_score, 2),
         "model": "Rule-Based Engine",
+        "mode": mode,
     })
 
 
 @app.route("/api/logs")
 def api_logs():
-    """All currently loaded flows across every source. GET /api/logs"""
-    error = _data_provider.get_error()
+    provider = _src()
+    error = provider.get_error()
     if error:
         return jsonify({"error": error}), 503
-    return jsonify(_data_provider.get_flows())
+    return jsonify(provider.get_flows())
 
 
 @app.route("/api/groups")
 def api_groups():
-    """One row per source. GET /api/groups"""
-    error = _data_provider.get_error()
+    error = _src().get_error()
     if error:
         return jsonify({"error": error}), 503
     return jsonify(get_groups())
@@ -979,8 +1299,7 @@ def api_groups():
 
 @app.route("/api/groups/<group_id>/logs")
 def api_group_logs(group_id):
-    """Every raw flow for one source. GET /api/groups/<src_ip>/logs"""
-    error = _data_provider.get_error()
+    error = _src().get_error()
     if error:
         return jsonify({"error": error}), 503
     logs = get_group_logs(group_id)
@@ -991,8 +1310,7 @@ def api_group_logs(group_id):
 
 @app.route("/api/groups/<group_id>/analysis")
 def api_group_analysis(group_id):
-    """The rule-based verdict for one source. GET /api/groups/<src_ip>/analysis"""
-    error = _data_provider.get_error()
+    error = _src().get_error()
     if error:
         return jsonify({"error": error}), 503
     analysis = get_group_analysis(group_id)
@@ -1003,12 +1321,7 @@ def api_group_analysis(group_id):
 
 @app.route("/api/groups/<group_id>/chat/history")
 def api_group_chat_history(group_id):
-    """The chat bubbles already exchanged for this source, oldest first —
-    used to replay the conversation after a page refresh.
-
-    GET /api/groups/<src_ip>/chat/history
-    response: [{ "sender": "user"|"bot", "lead": "...", "bullets": [...]? }, ...]
-    """
+    """Bubbles already exchanged for this source, oldest first."""
     if not get_group_logs(group_id):
         return jsonify({"error": "unknown group"}), 404
     return jsonify(load_display_history(group_id))
@@ -1016,37 +1329,38 @@ def api_group_chat_history(group_id):
 
 @app.route("/api/groups/<group_id>/chat", methods=["POST"])
 def api_group_chat(group_id):
-    """Ask a follow-up question scoped to one source only. Remembers earlier
-    turns for that source, resuming from disk across restarts, and records
-    the turn so a page refresh can replay it via /chat/history.
-
-    POST /api/groups/<src_ip>/chat   body: { "message": "<user text>" }
-    response: { "lead": "<one-line answer>", "bullets": ["...", ...] }  // bullets optional
+    """POST /api/groups/<src_ip>/chat  body: {"message": "..."}
+    200 -> {"lead": "...", "bullets": [...]?}
+    4xx/5xx -> {"error": "<reason>"}  (errors are NOT saved to chat history)
     """
     if not get_group_logs(group_id):
         return jsonify({"error": "unknown group"}), 404
     body = request.get_json(silent=True) or {}
-    message = body.get("message", "")
-    result = answer_group_chat(group_id, message)
+    message = str(body.get("message", "")).strip()
+    if not message:
+        return jsonify({"error": "Empty message."}), 400
+
+    result, ok = answer_group_chat(group_id, message)
+    if not ok:
+        return jsonify(result), 502
     append_display_turns(group_id, message, result)
     return jsonify(result)
 
 
 if __name__ == "__main__":
-    # Force an initial data load so startup errors are visible immediately
-    print("[Dashboard] Starting initial data load...")
-    _data_provider.refresh()
-    error = _data_provider.get_error()
-    if error:
-        print(f"[Dashboard] WARNING: {error}")
-        print("[Dashboard] The dashboard will start but show no data until Zeek logs are available.")
-    else:
-        print(f"[Dashboard] Ready — serving {len(_data_provider.get_flows())} flows")
+    print(f"[Dashboard] DEMO_MODE={DEMO_MODE} · live API {LIVE_API_URL} · Gemini model {GEMINI_MODEL}")
+    print(f"[Dashboard] Gemini key: {'loaded' if _gemini_key() else 'MISSING'} · {_env_diag_text()}")
+    if DEMO_MODE != "always":
+        print("[Dashboard] Starting initial data load...")
+        _data_provider.refresh()
+        error = _data_provider.get_error()
+        if error:
+            print(f"[Dashboard] NOTE: {error}")
+            if DEMO_MODE == "auto":
+                print("[Dashboard] Demo flows will be shown until live capture produces Zeek logs.")
+        else:
+            print(f"[Dashboard] Real data ready — {len(_data_provider.get_flows())} flows")
 
-    # threaded=True so one slow in-flight Gemini call doesn't block every
-    # other request on this process — cheap concurrency win for the dev
-    # server. For real production traffic, run this behind gunicorn/uWSGI
-    # with multiple workers instead of python app.py directly.
     app.run(
         host=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),
         port=int(os.environ.get("DASHBOARD_PORT", "9000")),
