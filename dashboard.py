@@ -662,6 +662,10 @@ class RealDataProvider:
 
     def get_error(self):
         self._ensure_fresh()
+        # A failed refresh (e.g. conn.log mid-write) must not blank the UI
+        # while we still hold good flows from the last successful read.
+        if self._flows and not _PIPELINE_ERROR:
+            return None
         return self._last_error
 
     def get_conn_log_path(self):
@@ -1068,6 +1072,29 @@ def api_gemini_status():
     })
 
 
+def get_top_recent(flows, n=20):
+    """Highest-scoring flow among the n most recent flows, plus how long
+    that source has been attacking (first -> last flagged flow)."""
+    if not flows:
+        return None
+    recent = sorted(flows, key=lambda f: f.get("timestamp_epoch", 0), reverse=True)[:n]
+    top = max(recent, key=lambda f: (float(f.get("threat_score", 0.0) or 0.0), f.get("timestamp_epoch", 0)))
+    score = float(top.get("threat_score", 0.0) or 0.0)
+    if score <= 0:
+        return None
+    src = top["src_ip"]
+    epochs = [f.get("timestamp_epoch") for f in flows
+              if f["src_ip"] == src and f["label"] != "BENIGN" and f.get("timestamp_epoch")]
+    duration = _format_activity_duration(max(epochs) - min(epochs)) if epochs else "0s"
+    return {
+        "score": round(score, 2),
+        "src_ip": src,
+        "label": top["label"],
+        "duration": duration,
+        "last_seen": top["timestamp"],
+    }
+
+
 @app.route("/api/stats")
 def api_stats():
     provider = _src()
@@ -1081,6 +1108,7 @@ def api_stats():
             "avg_confidence": 0.0,
             "model": "Rule-Based Engine",
             "mode": "live",
+            "top_recent": None,
             "error": error,
         })
 
@@ -1108,6 +1136,7 @@ def api_stats():
         "flagged_sources": flagged_sources,
         "avg_confidence": round(avg_conf, 4),
         "max_threat_score": round(max_threat_score, 2),
+        "top_recent": get_top_recent(flows),
         "model": "Rule-Based Engine",
         "mode": "live",
     })

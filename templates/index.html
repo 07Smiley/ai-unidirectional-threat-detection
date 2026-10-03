@@ -1,956 +1,1995 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Shakalaka — Threat Detection</title>
-<style>
-/* ===== Shakalaka: black canvas, white type, red only for threats ===== */
-:root{
-  --bg:#000; --bg2:#0b0b0c; --bg3:#161618; --line:#26262b;
-  --text:#fff; --soft:#cfcfd8; --muted:#8c8c96;
-  --red:#ff4d4d; --amber:#ffb020;
-  --hover-bg:#f0f0fa; --hover-text:#000;
-  --user-bg:#f0f0fa; --user-text:#000;
-  --font:"D-DIN","DIN Alternate","Arial Narrow",Arial,Verdana,sans-serif;
-  --font-display:"D-DIN-Bold","D-DIN","DIN Condensed","Arial Narrow",Arial,Verdana,sans-serif;
-  font-family:var(--font);
-}
-*{box-sizing:border-box;margin:0;padding:0}
-html{color-scheme:dark}
-body{background:var(--bg);color:var(--text);min-height:100vh;line-height:1.5;letter-spacing:.2px;font-size:14px}
-button,input,select{font:inherit;letter-spacing:inherit}
-:focus-visible{outline:2px solid var(--text);outline-offset:2px}
-
-/* --- nav: logo | interface | start/stop | time --- */
-header{height:64px;background:var(--bg);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:20px;padding:0 28px;position:sticky;top:0;z-index:20}
-.brand{display:flex;align-items:center;gap:12px;min-width:0}
-.brand svg{width:30px;height:30px;color:var(--text);flex-shrink:0}
-.brand-text h1{font-family:var(--font-display);font-size:20px;font-weight:700;letter-spacing:1.4px;line-height:1;text-transform:uppercase}
-.model-badge{display:block;font-size:12px;color:var(--muted);margin-top:4px;white-space:nowrap}
-.live-controls{margin-left:auto;display:flex;align-items:center;gap:16px}
-.live-select{height:38px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:0 12px;min-width:170px;max-width:240px;font-size:13px}
-.live-btn{height:38px;border-radius:32px;padding:0 20px;border:1px solid var(--text);background:transparent;color:var(--text);font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}
-.live-btn:hover:not(:disabled){background:var(--hover-bg);color:var(--hover-text);border-color:var(--hover-bg)}
-.live-btn.secondary{border-color:var(--line);color:var(--muted)}
-.live-btn:disabled{opacity:.35;cursor:not-allowed}
-.live-btn.toggle{min-width:104px}
-.live-btn.toggle.running{border-color:var(--red);color:var(--red)}
-.live-btn.toggle.running:hover:not(:disabled){background:var(--red);border-color:var(--red);color:#000}
-.live-status{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap}
-.live-status::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
-.live-status.on{color:var(--text)}
-.live-status.on::before{background:var(--text)}
-.live-status.offline{color:var(--red)}
-.live-status.offline::before{background:var(--red)}
-.live-clock{text-align:right;line-height:1.2;min-width:96px}
-.live-clock .time{font-family:var(--font-display);font-size:16px;font-weight:700;letter-spacing:1px}
-.live-clock .date{font-size:11px;color:var(--muted);margin-top:2px}
-
-/* --- hamburger (shown on small screens only) --- */
-.hamburger{display:none;width:42px;height:42px;border-radius:50%;border:1px solid var(--line);background:rgba(255,255,255,.04);cursor:pointer;position:relative;flex-shrink:0;transition:background .25s ease,border-color .25s ease}
-.hamburger:hover{border-color:var(--text);background:rgba(255,255,255,.08)}
-.hamburger span{position:absolute;left:12px;right:12px;height:2px;border-radius:2px;background:var(--text);transition:top .35s cubic-bezier(.2,.8,.2,1),transform .35s cubic-bezier(.2,.8,.2,1),opacity .2s ease}
-.hamburger span:nth-child(1){top:13px}
-.hamburger span:nth-child(2){top:19px}
-.hamburger span:nth-child(3){top:25px}
-.hamburger.open{border-color:var(--text)}
-.hamburger.open span:nth-child(1){top:19px;transform:rotate(45deg)}
-.hamburger.open span:nth-child(2){opacity:0;transform:scaleX(0)}
-.hamburger.open span:nth-child(3){top:19px;transform:rotate(-45deg)}
-
-/* --- page shell --- */
-.shell{padding:20px 28px 24px;display:flex;flex-direction:column;gap:16px;height:calc(100vh - 64px);min-height:640px}
-
-/* --- summary strip --- */
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;flex-shrink:0}
-.stat{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:14px 20px;display:flex;flex-direction:column;min-width:0}
-.stat-icon{display:none}
-.stat .label{font-size:12px;color:var(--muted)}
-.stat .value{font-family:var(--font-display);font-size:30px;line-height:1.1;font-weight:700;letter-spacing:.6px;margin-top:2px}
-.stat .sub{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stat.flag .value{color:var(--red)}
-.stat.threat-stat{cursor:pointer}
-.stat.threat-stat:hover{border-color:var(--text)}
-
-/* --- threat response bar + modal --- */
-.response-panel{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid var(--red);border-radius:12px;padding:14px 20px;flex-shrink:0}
-.response-panel[hidden]{display:none!important}
-.response-title{font-family:var(--font-display);font-size:14px;font-weight:700;color:var(--red);letter-spacing:.6px}
-.response-detail{font-size:14px;margin-top:2px}
-.response-meta{font-size:12px;color:var(--muted);margin-top:2px}
-.response-panel>div:last-child{display:flex;gap:10px;flex-shrink:0}
-.response-panel .live-btn:not(.secondary){border-color:var(--red);color:var(--red)}
-.response-panel .live-btn:not(.secondary):hover:not(:disabled){background:var(--red);border-color:var(--red);color:#000}
-.threat-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999}
-.threat-modal-backdrop[hidden]{display:none!important}
-.threat-modal{width:min(520px,100%);background:#000;border:1px solid var(--red);border-radius:16px;padding:32px;color:#fff}
-.threat-modal .kicker{font-size:13px;color:var(--red)}
-.threat-modal h3{font-family:var(--font-display);font-size:26px;font-weight:700;letter-spacing:.6px;margin:4px 0 8px;line-height:1.2}
-.threat-modal .score{font-family:var(--font-display);font-size:76px;font-weight:700;letter-spacing:1px;line-height:1;color:var(--red)}
-.threat-modal .meta{font-size:14px;color:#f0f0fa;line-height:1.9;margin-top:16px}
-.threat-modal .meta strong{color:#fff}
-.threat-modal .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:28px}
-.threat-modal button{height:44px;border-radius:32px;padding:0 24px;font-size:13px;font-weight:700;cursor:pointer;background:transparent}
-.threat-modal .block{color:var(--red);border:1px solid var(--red)}
-.threat-modal .block:hover:not(:disabled){background:var(--red);color:#000}
-.threat-modal .ignore{color:#fff;border:1px solid #fff}
-.threat-modal .ignore:hover:not(:disabled){background:#f0f0fa;color:#000}
-.threat-modal button:disabled{opacity:.35;cursor:not-allowed}
-
-/* --- workspace: sources | (logs / analysis tabs) --- */
-.workspace{flex:1;min-height:0;display:grid;grid-template-columns:340px minmax(0,1fr);gap:16px}
-.panel{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
-.panel-head{height:60px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 20px;border-bottom:1px solid var(--line)}
-.panel-head h2{font-family:var(--font-display);font-size:15px;font-weight:700;letter-spacing:.6px}
-.panel-head .count{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%}
-.empty{padding:48px 24px;text-align:center;color:var(--muted);font-size:14px;line-height:1.7}
-
-/* --- tabs --- */
-.tabs{display:flex;gap:8px}
-.tab{height:36px;padding:0 18px;border-radius:32px;border:1px solid var(--line);background:transparent;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}
-.tab:hover{color:var(--text);border-color:var(--text)}
-.tab[aria-selected="true"]{background:var(--hover-bg);color:var(--hover-text);border-color:var(--hover-bg)}
-.tab-pane{flex:1;min-height:0;display:flex;flex-direction:column}
-.tab-pane[hidden]{display:none!important}
-
-/* --- 1. flagged sources --- */
-.source-list{flex:1;overflow-y:auto}
-.source-row{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);border-left:3px solid transparent;cursor:pointer}
-.source-row:hover{background:var(--bg3)}
-.source-row.active{background:var(--bg3);border-left-color:var(--text)}
-.source-row.threat-target{border-left-color:var(--red)}
-.source-row .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.source-row .who{flex:1;min-width:0}
-.source-row .primary{font-family:var(--font-display);font-size:16px;font-weight:700;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.source-row .secondary{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.source-row .meta{text-align:right;flex-shrink:0}
-.source-row .score-value{font-family:var(--font-display);font-size:18px;font-weight:700;letter-spacing:.5px}
-.source-row .flows{font-size:12px;color:var(--muted);margin-top:2px}
-
-/* --- 2a. logs tab: summary + all logs of the selected source --- */
-.source-detail{flex-shrink:0;padding:20px 24px;border-bottom:1px solid var(--line)}
-.source-detail[hidden]{display:none!important}
-.detail-title{display:flex;justify-content:space-between;gap:16px;align-items:center}
-.detail-title .ip{font-family:var(--font-display);font-size:26px;font-weight:700;letter-spacing:.6px;line-height:1.2;overflow-wrap:anywhere}
-.detail-title .secondary{font-size:13px;color:var(--muted);margin-top:2px}
-.detail-title .verdict{font-size:13px;font-weight:700;color:var(--red);border:1px solid var(--red);border-radius:32px;padding:6px 14px;white-space:nowrap}
-.detail-grid{display:flex;flex-wrap:wrap;gap:12px 36px;margin-top:16px}
-.detail-metric .k{font-size:12px;color:var(--muted)}
-.detail-metric .v{font-family:var(--font-display);font-size:16px;font-weight:700;letter-spacing:.4px;margin-top:2px}
-#logBody{flex:1;min-height:0;overflow:auto}
-.log-table-head,.log-row{display:grid;grid-template-columns:88px minmax(0,1fr) 120px 64px 88px;gap:12px;align-items:center;padding:0 24px}
-.log-table-head{position:sticky;top:0;z-index:1;background:var(--bg2);height:40px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}
-.log-row{min-height:48px;border-bottom:1px solid var(--line);font-size:13px}
-.log-row:hover{background:var(--bg3)}
-.log-row .time{color:var(--muted)}
-.log-row .dest{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.log-row .dest em{font-style:normal;color:var(--muted)}
-.log-row .proto{color:var(--soft)}
-.log-row .proto em{font-style:normal;color:var(--muted)}
-.log-row .flow-score{font-weight:700}
-.log-row .flow-score.hot{color:var(--red)}
-.log-row .lbl{font-size:11px;font-weight:700;padding:4px 10px;border-radius:32px;text-align:center;white-space:nowrap}
-.log-row .lbl.ddos{color:var(--red);border:1px solid var(--red)}
-.log-row .lbl.benign{color:var(--muted);border:1px solid var(--line)}
-
-/* --- 2b. analysis tab: gemini chat, ask box at the bottom --- */
-.gemini-bar{flex-shrink:0;padding:12px 28px 0}
-.gemini-status{font-size:12px;color:var(--muted)}
-.gemini-status.ready{color:var(--soft)}
-.chat-log{flex:1;min-height:0;overflow-y:auto;padding:20px 28px 24px;display:flex;flex-direction:column;gap:18px}
-.chat-row{display:flex}
-.chat-row.user{justify-content:flex-end}
-.chat-row .bubble{max-width:min(760px,90%);font-size:14px;line-height:1.7;padding:14px 18px;border-radius:14px;background:var(--bg3);color:var(--text)}
-.chat-row.user .bubble{background:var(--user-bg);color:var(--user-text);border-bottom-right-radius:4px}
-.chat-row.bot .bubble{border-bottom-left-radius:4px}
-.chat-row .bubble .verdict{display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:32px;margin-bottom:8px}
-.chat-row .bubble .verdict.ddos{color:var(--red);border:1px solid var(--red)}
-.chat-row .bubble .verdict.benign{color:var(--muted);border:1px solid var(--line)}
-.chat-row .bubble ul{list-style:none;display:flex;flex-direction:column;gap:6px;margin-top:10px}
-.chat-row .bubble li{padding-left:16px;color:var(--soft);position:relative}
-.chat-row.user .bubble li{color:inherit}
-.chat-row .bubble li::before{content:"–";position:absolute;left:0;color:var(--muted)}
-.chat-row.error .bubble{background:transparent;border:1px solid var(--red);color:var(--red)}
-.chat-row .bubble code{border:1px solid var(--line);padding:1px 5px;border-radius:4px;font-size:12px}
-.typing-dots{display:flex;gap:5px;padding:4px 2px}
-.typing-dots span{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:dotPulse 1.2s infinite ease-in-out}
-.typing-dots span:nth-child(2){animation-delay:.15s}
-.typing-dots span:nth-child(3){animation-delay:.3s}
-@keyframes dotPulse{0%,80%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
-.chat-foot{flex-shrink:0;border-top:1px solid var(--line);padding:16px 28px 20px;display:flex;flex-direction:column;gap:12px}
-.quick-qs{display:flex;flex-wrap:wrap;gap:8px}
-.quick-q{background:transparent;color:var(--soft);border:1px solid var(--line);border-radius:32px;padding:7px 14px;font-size:12px;cursor:pointer}
-.quick-q:hover:not(:disabled){border-color:var(--text);color:var(--text)}
-.quick-q:disabled{opacity:.35;cursor:not-allowed}
-.chat-input-row{display:flex;gap:10px}
-.chat-input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:32px;padding:0 22px;height:48px;color:var(--text);outline:none;font-size:14px}
-.chat-input:focus{border-color:var(--text)}
-.chat-input::placeholder{color:var(--muted)}
-.chat-send{height:48px;background:transparent;color:var(--text);border:1px solid var(--text);border-radius:32px;padding:0 24px;font-size:13px;font-weight:700;cursor:pointer}
-.chat-send:hover:not(:disabled){background:var(--hover-bg);color:var(--hover-text);border-color:var(--hover-bg)}
-.chat-send:disabled{opacity:.35;cursor:not-allowed}
-
-.sensor-control[hidden]{display:none!important}
-::-webkit-scrollbar{width:7px;height:7px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--line);border-radius:7px}
-
-/* --- responsive --- */
-@media(max-width:1280px){
-  .workspace{grid-template-columns:300px minmax(0,1fr)}
-}
-@media(max-width:1000px){
-  .shell{height:auto;min-height:0;padding:16px}
-  .workspace{grid-template-columns:1fr}
-  .source-list{max-height:320px}
-  #logBody{max-height:480px}
-  #paneAnalysis{height:600px;flex:none}
-
-  /* header: brand | clock | hamburger, controls drop down as glass panel */
-  header{padding:0 16px;gap:12px}
-  .live-clock{margin-left:auto}
-  .hamburger{display:block}
-  .live-controls{
-    position:absolute;top:calc(100% + 10px);left:16px;right:16px;margin-left:0;
-    flex-direction:column;align-items:stretch;gap:12px;padding:18px;
-    background:rgba(24,24,30,.82);
-    border:1px solid rgba(255,255,255,.14);border-radius:18px;
-    box-shadow:0 24px 60px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.1);
-    opacity:0;visibility:hidden;pointer-events:none;
-    transform:translateY(-14px) scale(.97);transform-origin:top right;
-    transition:opacity .3s ease,transform .4s cubic-bezier(.2,.8,.2,1),visibility 0s linear .4s;
-  }
-  @supports((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){
-    .live-controls{
-      background:linear-gradient(135deg,rgba(255,255,255,.14),rgba(255,255,255,.04));
-      -webkit-backdrop-filter:blur(22px) saturate(180%);
-      backdrop-filter:blur(22px) saturate(180%);
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shakalaka — Threat Detection</title>
+  <style>
+    /* ===== Shakalaka: black canvas, white type, red only for threats ===== */
+    :root {
+      --bg: #000;
+      --bg2: #0b0b0c;
+      --bg3: #161618;
+      --line: #26262b;
+      --text: #fff;
+      --soft: #cfcfd8;
+      --muted: #8c8c96;
+      --red: #ff4d4d;
+      --amber: #ffb020;
+      --hover-bg: #f0f0fa;
+      --hover-text: #000;
+      --user-bg: #f0f0fa;
+      --user-text: #000;
+      --font: "D-DIN", "DIN Alternate", "Arial Narrow", Arial, Verdana, sans-serif;
+      --font-display: "D-DIN-Bold", "D-DIN", "DIN Condensed", "Arial Narrow", Arial, Verdana, sans-serif;
+      font-family: var(--font);
     }
-  }
-  .live-controls.open{
-    opacity:1;visibility:visible;pointer-events:auto;transform:none;
-    transition:opacity .3s ease,transform .4s cubic-bezier(.2,.8,.2,1),visibility 0s;
-  }
-  .live-controls>*{opacity:0;transform:translateY(-8px);transition:opacity .3s ease,transform .4s cubic-bezier(.2,.8,.2,1)}
-  .live-controls.open>*{opacity:1;transform:none}
-  .live-controls.open>*:nth-child(1){transition-delay:.06s}
-  .live-controls.open>*:nth-child(2){transition-delay:.12s}
-  .live-controls.open>*:nth-child(3){transition-delay:.18s}
-  .live-select,.live-btn.toggle{width:100%;max-width:none;height:44px}
-  .live-select{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.18)}
-  .live-btn.toggle{border-color:rgba(255,255,255,.5)}
-  .live-status{display:inline-flex;justify-content:center;color:var(--soft)}
-}
-@media(prefers-reduced-motion:reduce){
-  .live-controls,.live-controls>*,.hamburger,.hamburger span{transition-duration:.01ms!important;transition-delay:0s!important}
-}
-@media(max-width:760px){
-  .stats{grid-template-columns:1fr}
-  .stat .value{font-size:26px}
-  .threat-modal .score{font-size:56px}
-  .log-table-head{display:none}
-  .log-row{display:flex;flex-wrap:wrap;gap:6px 14px;padding:12px 20px}
-  .response-panel{flex-direction:column;align-items:flex-start}
-  .panel-head .count{display:none}
-  .chat-log,.chat-foot,.gemini-bar{padding-left:16px;padding-right:16px}
-}
-@media(max-width:480px){
-  .shell{padding:12px}
-  .brand svg{width:26px;height:26px}
-  .brand-text h1{font-size:17px}
-  .model-badge{font-size:11px}
-  .live-clock{min-width:0}
-  .live-clock .date{display:none}
-  .live-controls{left:12px;right:12px}
-  .detail-title .ip{font-size:20px}
-  .detail-title .verdict{font-size:12px;padding:5px 10px}
-}
-</style>
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    html {
+      color-scheme: dark
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+      letter-spacing: .2px;
+      font-size: 14px
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+      letter-spacing: inherit
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--text);
+      outline-offset: 2px
+    }
+
+    /* --- nav: logo | interface | start/stop | time --- */
+    header {
+      height: 64px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      padding: 0 28px;
+      position: sticky;
+      top: 0;
+      z-index: 20
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0
+    }
+
+    .brand svg {
+      width: 30px;
+      height: 30px;
+      color: var(--text);
+      flex-shrink: 0
+    }
+
+    .brand-text h1 {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 1.4px;
+      line-height: 1;
+      text-transform: uppercase
+    }
+
+    .model-badge {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+      white-space: nowrap
+    }
+
+    .live-controls {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 16px
+    }
+
+    .live-select {
+      height: 38px;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 12px;
+      min-width: 170px;
+      max-width: 240px;
+      font-size: 13px
+    }
+
+    .live-btn {
+      height: 38px;
+      border-radius: 32px;
+      padding: 0 20px;
+      border: 1px solid var(--text);
+      background: transparent;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap
+    }
+
+    .live-btn:hover:not(:disabled) {
+      background: var(--hover-bg);
+      color: var(--hover-text);
+      border-color: var(--hover-bg)
+    }
+
+    .live-btn.secondary {
+      border-color: var(--line);
+      color: var(--muted)
+    }
+
+    .live-btn:disabled {
+      opacity: .35;
+      cursor: not-allowed
+    }
+
+    .live-btn.toggle {
+      min-width: 104px
+    }
+
+    .live-btn.toggle.running {
+      border-color: var(--red);
+      color: var(--red)
+    }
+
+    .live-btn.toggle.running:hover:not(:disabled) {
+      background: var(--red);
+      border-color: var(--red);
+      color: #000
+    }
+
+    .live-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap
+    }
+
+    .live-status::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted)
+    }
+
+    .live-status.on {
+      color: var(--text)
+    }
+
+    .live-status.on::before {
+      background: var(--text)
+    }
+
+    .live-status.offline {
+      color: var(--red)
+    }
+
+    .live-status.offline::before {
+      background: var(--red)
+    }
+
+    .live-clock {
+      text-align: right;
+      line-height: 1.2;
+      min-width: 96px
+    }
+
+    .live-clock .time {
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 1px
+    }
+
+    .live-clock .date {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px
+    }
+
+    /* --- hamburger (shown on small screens only) --- */
+    .hamburger {
+      display: none;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, .04);
+      cursor: pointer;
+      position: relative;
+      flex-shrink: 0;
+      transition: background .25s ease, border-color .25s ease
+    }
+
+    .hamburger:hover {
+      border-color: var(--text);
+      background: rgba(255, 255, 255, .08)
+    }
+
+    .hamburger span {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--text);
+      transition: top .35s cubic-bezier(.2, .8, .2, 1), transform .35s cubic-bezier(.2, .8, .2, 1), opacity .2s ease
+    }
+
+    .hamburger span:nth-child(1) {
+      top: 13px
+    }
+
+    .hamburger span:nth-child(2) {
+      top: 19px
+    }
+
+    .hamburger span:nth-child(3) {
+      top: 25px
+    }
+
+    .hamburger.open {
+      border-color: var(--text)
+    }
+
+    .hamburger.open span:nth-child(1) {
+      top: 19px;
+      transform: rotate(45deg)
+    }
+
+    .hamburger.open span:nth-child(2) {
+      opacity: 0;
+      transform: scaleX(0)
+    }
+
+    .hamburger.open span:nth-child(3) {
+      top: 19px;
+      transform: rotate(-45deg)
+    }
+
+    /* --- page shell --- */
+    .shell {
+      padding: 20px 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      height: calc(100vh - 64px);
+      min-height: 640px
+    }
+
+    /* --- summary strip --- */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      flex-shrink: 0
+    }
+
+    .stat {
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 20px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0
+    }
+
+    .stat-icon {
+      display: none
+    }
+
+    .stat .label {
+      font-size: 12px;
+      color: var(--muted)
+    }
+
+    .stat .value {
+      font-family: var(--font-display);
+      font-size: 30px;
+      line-height: 1.1;
+      font-weight: 700;
+      letter-spacing: .6px;
+      margin-top: 2px
+    }
+
+    .stat .sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis
+    }
+
+    .stat.flag .value {
+      color: var(--red)
+    }
+
+    .stat.threat-stat {
+      cursor: pointer
+    }
+
+    .stat.threat-stat:hover {
+      border-color: var(--text)
+    }
+
+    /* --- threat response bar + modal --- */
+    .response-panel {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      border: 1px solid var(--red);
+      border-radius: 12px;
+      padding: 14px 20px;
+      flex-shrink: 0
+    }
+
+    .response-panel[hidden] {
+      display: none !important
+    }
+
+    .response-title {
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--red);
+      letter-spacing: .6px
+    }
+
+    .response-detail {
+      font-size: 14px;
+      margin-top: 2px
+    }
+
+    .response-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px
+    }
+
+    .response-panel>div:last-child {
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0
+    }
+
+    .response-panel .live-btn:not(.secondary) {
+      border-color: var(--red);
+      color: var(--red)
+    }
+
+    .response-panel .live-btn:not(.secondary):hover:not(:disabled) {
+      background: var(--red);
+      border-color: var(--red);
+      color: #000
+    }
+
+    .threat-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 9999
+    }
+
+    .threat-modal-backdrop[hidden] {
+      display: none !important
+    }
+
+    .threat-modal {
+      width: min(520px, 100%);
+      background: #000;
+      border: 1px solid var(--red);
+      border-radius: 16px;
+      padding: 32px;
+      color: #fff
+    }
+
+    .threat-modal .kicker {
+      font-size: 13px;
+      color: var(--red)
+    }
+
+    .threat-modal h3 {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: .6px;
+      margin: 4px 0 8px;
+      line-height: 1.2
+    }
+
+    .threat-modal .score {
+      font-family: var(--font-display);
+      font-size: 76px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      line-height: 1;
+      color: var(--red)
+    }
+
+    .threat-modal .meta {
+      font-size: 14px;
+      color: #f0f0fa;
+      line-height: 1.9;
+      margin-top: 16px
+    }
+
+    .threat-modal .meta strong {
+      color: #fff
+    }
+
+    .threat-modal .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 28px
+    }
+
+    .threat-modal button {
+      height: 44px;
+      border-radius: 32px;
+      padding: 0 24px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      background: transparent
+    }
+
+    .threat-modal .block {
+      color: var(--red);
+      border: 1px solid var(--red)
+    }
+
+    .threat-modal .block:hover:not(:disabled) {
+      background: var(--red);
+      color: #000
+    }
+
+    .threat-modal .ignore {
+      color: #fff;
+      border: 1px solid #fff
+    }
+
+    .threat-modal .ignore:hover:not(:disabled) {
+      background: #f0f0fa;
+      color: #000
+    }
+
+    .threat-modal button:disabled {
+      opacity: .35;
+      cursor: not-allowed
+    }
+
+    /* --- workspace: sources | (logs / analysis tabs) --- */
+    .workspace {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 340px minmax(0, 1fr);
+      gap: 16px
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      min-width: 0;
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden
+    }
+
+    .panel-head {
+      height: 60px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--line)
+    }
+
+    .panel-head h2 {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: .6px
+    }
+
+    .panel-head .count {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 50%
+    }
+
+    .empty {
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7
+    }
+
+    /* --- tabs --- */
+    .tabs {
+      display: flex;
+      gap: 8px
+    }
+
+    .tab {
+      height: 36px;
+      padding: 0 18px;
+      border-radius: 32px;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap
+    }
+
+    .tab:hover {
+      color: var(--text);
+      border-color: var(--text)
+    }
+
+    .tab[aria-selected="true"] {
+      background: var(--hover-bg);
+      color: var(--hover-text);
+      border-color: var(--hover-bg)
+    }
+
+    .tab-pane {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column
+    }
+
+    .tab-pane[hidden] {
+      display: none !important
+    }
+
+    /* --- 1. flagged sources --- */
+    .source-list {
+      flex: 1;
+      overflow-y: auto
+    }
+
+    .source-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--line);
+      border-left: 3px solid transparent;
+      cursor: pointer
+    }
+
+    .source-row:hover {
+      background: var(--bg3)
+    }
+
+    .source-row.active {
+      background: var(--bg3);
+      border-left-color: var(--text)
+    }
+
+    .source-row.threat-target {
+      border-left-color: var(--red)
+    }
+
+    .source-row .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0
+    }
+
+    .source-row .who {
+      flex: 1;
+      min-width: 0
+    }
+
+    .source-row .primary {
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: .5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis
+    }
+
+    .source-row .secondary {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis
+    }
+
+    .source-row .meta {
+      text-align: right;
+      flex-shrink: 0
+    }
+
+    .source-row .score-value {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: .5px
+    }
+
+    .source-row .flows {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px
+    }
+
+    /* --- 2a. logs tab: summary + all logs of the selected source --- */
+    .source-detail {
+      flex-shrink: 0;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--line)
+    }
+
+    .source-detail[hidden] {
+      display: none !important
+    }
+
+    .detail-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center
+    }
+
+    .detail-title .ip {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: .6px;
+      line-height: 1.2;
+      overflow-wrap: anywhere
+    }
+
+    .detail-title .secondary {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 2px
+    }
+
+    .detail-title .verdict {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--red);
+      border: 1px solid var(--red);
+      border-radius: 32px;
+      padding: 6px 14px;
+      white-space: nowrap
+    }
+
+    .detail-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 36px;
+      margin-top: 16px
+    }
+
+    .detail-metric .k {
+      font-size: 12px;
+      color: var(--muted)
+    }
+
+    .detail-metric .v {
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: .4px;
+      margin-top: 2px
+    }
+
+    #logBody {
+      flex: 1;
+      min-height: 0;
+      overflow: auto
+    }
+
+    .log-table-head,
+    .log-row {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr) 120px 64px 88px;
+      gap: 12px;
+      align-items: center;
+      padding: 0 24px
+    }
+
+    .log-table-head {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--bg2);
+      height: 40px;
+      color: var(--muted);
+      font-size: 12px;
+      border-bottom: 1px solid var(--line)
+    }
+
+    .log-row {
+      min-height: 48px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px
+    }
+
+    .log-row:hover {
+      background: var(--bg3)
+    }
+
+    .log-row .time {
+      color: var(--muted)
+    }
+
+    .log-row .dest {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis
+    }
+
+    .log-row .dest em {
+      font-style: normal;
+      color: var(--muted)
+    }
+
+    .log-row .proto {
+      color: var(--soft)
+    }
+
+    .log-row .proto em {
+      font-style: normal;
+      color: var(--muted)
+    }
+
+    .log-row .flow-score {
+      font-weight: 700
+    }
+
+    .log-row .flow-score.hot {
+      color: var(--red)
+    }
+
+    .log-row .lbl {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 32px;
+      text-align: center;
+      white-space: nowrap
+    }
+
+    .log-row .lbl.ddos {
+      color: var(--red);
+      border: 1px solid var(--red)
+    }
+
+    .log-row .lbl.benign {
+      color: var(--muted);
+      border: 1px solid var(--line)
+    }
+
+    /* --- 2b. analysis tab: gemini chat, ask box at the bottom --- */
+    .gemini-bar {
+      flex-shrink: 0;
+      padding: 12px 28px 0
+    }
+
+    .gemini-status {
+      font-size: 12px;
+      color: var(--muted)
+    }
+
+    .gemini-status.ready {
+      color: var(--soft)
+    }
+
+    .chat-log {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 20px 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px
+    }
+
+    .chat-row {
+      display: flex
+    }
+
+    .chat-row.user {
+      justify-content: flex-end
+    }
+
+    .chat-row .bubble {
+      max-width: min(760px, 90%);
+      font-size: 14px;
+      line-height: 1.7;
+      padding: 14px 18px;
+      border-radius: 14px;
+      background: var(--bg3);
+      color: var(--text)
+    }
+
+    .chat-row.user .bubble {
+      background: var(--user-bg);
+      color: var(--user-text);
+      border-bottom-right-radius: 4px
+    }
+
+    .chat-row.bot .bubble {
+      border-bottom-left-radius: 4px
+    }
+
+    .chat-row .bubble .verdict {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 32px;
+      margin-bottom: 8px
+    }
+
+    .chat-row .bubble .verdict.ddos {
+      color: var(--red);
+      border: 1px solid var(--red)
+    }
+
+    .chat-row .bubble .verdict.benign {
+      color: var(--muted);
+      border: 1px solid var(--line)
+    }
+
+    .chat-row .bubble ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 10px
+    }
+
+    .chat-row .bubble li {
+      padding-left: 16px;
+      color: var(--soft);
+      position: relative
+    }
+
+    .chat-row.user .bubble li {
+      color: inherit
+    }
+
+    .chat-row .bubble li::before {
+      content: "–";
+      position: absolute;
+      left: 0;
+      color: var(--muted)
+    }
+
+    .chat-row.error .bubble {
+      background: transparent;
+      border: 1px solid var(--red);
+      color: var(--red)
+    }
+
+    .chat-row .bubble code {
+      border: 1px solid var(--line);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 12px
+    }
+
+    .typing-dots {
+      display: flex;
+      gap: 5px;
+      padding: 4px 2px
+    }
+
+    .typing-dots span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+      animation: dotPulse 1.2s infinite ease-in-out
+    }
+
+    .typing-dots span:nth-child(2) {
+      animation-delay: .15s
+    }
+
+    .typing-dots span:nth-child(3) {
+      animation-delay: .3s
+    }
+
+    @keyframes dotPulse {
+
+      0%,
+      80%,
+      100% {
+        opacity: .25;
+        transform: scale(.8)
+      }
+
+      40% {
+        opacity: 1;
+        transform: scale(1)
+      }
+    }
+
+    .chat-foot {
+      flex-shrink: 0;
+      border-top: 1px solid var(--line);
+      padding: 16px 28px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px
+    }
+
+    .quick-qs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px
+    }
+
+    .quick-q {
+      background: transparent;
+      color: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 32px;
+      padding: 7px 14px;
+      font-size: 12px;
+      cursor: pointer
+    }
+
+    .quick-q:hover:not(:disabled) {
+      border-color: var(--text);
+      color: var(--text)
+    }
+
+    .quick-q:disabled {
+      opacity: .35;
+      cursor: not-allowed
+    }
+
+    .chat-input-row {
+      display: flex;
+      gap: 10px
+    }
+
+    .chat-input {
+      flex: 1;
+      min-width: 0;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 32px;
+      padding: 0 22px;
+      height: 48px;
+      color: var(--text);
+      outline: none;
+      font-size: 14px
+    }
+
+    .chat-input:focus {
+      border-color: var(--text)
+    }
+
+    .chat-input::placeholder {
+      color: var(--muted)
+    }
+
+    .chat-send {
+      height: 48px;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--text);
+      border-radius: 32px;
+      padding: 0 24px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer
+    }
+
+    .chat-send:hover:not(:disabled) {
+      background: var(--hover-bg);
+      color: var(--hover-text);
+      border-color: var(--hover-bg)
+    }
+
+    .chat-send:disabled {
+      opacity: .35;
+      cursor: not-allowed
+    }
+
+    .sensor-control[hidden] {
+      display: none !important
+    }
+
+    ::-webkit-scrollbar {
+      width: 7px;
+      height: 7px
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--line);
+      border-radius: 7px
+    }
+
+    /* --- responsive --- */
+    @media(max-width:1280px) {
+      .workspace {
+        grid-template-columns: 300px minmax(0, 1fr)
+      }
+    }
+
+    @media(max-width:1000px) {
+      .shell {
+        height: auto;
+        min-height: 0;
+        padding: 16px
+      }
+
+      .workspace {
+        grid-template-columns: 1fr
+      }
+
+      .source-list {
+        max-height: 320px
+      }
+
+      #logBody {
+        max-height: 480px
+      }
+
+      #paneAnalysis {
+        height: 600px;
+        flex: none
+      }
+
+      /* header: brand | clock | hamburger, controls drop down as glass panel */
+      header {
+        padding: 0 16px;
+        gap: 12px
+      }
+
+      .live-clock {
+        margin-left: auto
+      }
+
+      .hamburger {
+        display: block
+      }
+
+      .live-controls {
+        position: absolute;
+        top: calc(100% + 10px);
+        left: 16px;
+        right: 16px;
+        margin-left: 0;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        padding: 18px;
+        background: rgba(24, 24, 30, .82);
+        border: 1px solid rgba(255, 255, 255, .14);
+        border-radius: 18px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .1);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transform: translateY(-14px) scale(.97);
+        transform-origin: top right;
+        transition: opacity .3s ease, transform .4s cubic-bezier(.2, .8, .2, 1), visibility 0s linear .4s;
+      }
+
+      @supports((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))) {
+        .live-controls {
+          background: linear-gradient(135deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, .04));
+          -webkit-backdrop-filter: blur(22px) saturate(180%);
+          backdrop-filter: blur(22px) saturate(180%);
+        }
+      }
+
+      .live-controls.open {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transform: none;
+        transition: opacity .3s ease, transform .4s cubic-bezier(.2, .8, .2, 1), visibility 0s;
+      }
+
+      .live-controls>* {
+        opacity: 0;
+        transform: translateY(-8px);
+        transition: opacity .3s ease, transform .4s cubic-bezier(.2, .8, .2, 1)
+      }
+
+      .live-controls.open>* {
+        opacity: 1;
+        transform: none
+      }
+
+      .live-controls.open>*:nth-child(1) {
+        transition-delay: .06s
+      }
+
+      .live-controls.open>*:nth-child(2) {
+        transition-delay: .12s
+      }
+
+      .live-controls.open>*:nth-child(3) {
+        transition-delay: .18s
+      }
+
+      .live-select,
+      .live-btn.toggle {
+        width: 100%;
+        max-width: none;
+        height: 44px
+      }
+
+      .live-select {
+        background: rgba(255, 255, 255, .06);
+        border-color: rgba(255, 255, 255, .18)
+      }
+
+      .live-btn.toggle {
+        border-color: rgba(255, 255, 255, .5)
+      }
+
+      .live-status {
+        display: inline-flex;
+        justify-content: center;
+        color: var(--soft)
+      }
+    }
+
+    @media(prefers-reduced-motion:reduce) {
+
+      .live-controls,
+      .live-controls>*,
+      .hamburger,
+      .hamburger span {
+        transition-duration: .01ms !important;
+        transition-delay: 0s !important
+      }
+    }
+
+    @media(max-width:760px) {
+      .stats {
+        grid-template-columns: 1fr
+      }
+
+      .stat .value {
+        font-size: 26px
+      }
+
+      .threat-modal .score {
+        font-size: 56px
+      }
+
+      .log-table-head {
+        display: none
+      }
+
+      .log-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        padding: 12px 20px
+      }
+
+      .response-panel {
+        flex-direction: column;
+        align-items: flex-start
+      }
+
+      .panel-head .count {
+        display: none
+      }
+
+      .chat-log,
+      .chat-foot,
+      .gemini-bar {
+        padding-left: 16px;
+        padding-right: 16px
+      }
+    }
+
+    @media(max-width:480px) {
+      .shell {
+        padding: 12px
+      }
+
+      .brand svg {
+        width: 26px;
+        height: 26px
+      }
+
+      .brand-text h1 {
+        font-size: 17px
+      }
+
+      .model-badge {
+        font-size: 11px
+      }
+
+      .live-clock {
+        min-width: 0
+      }
+
+      .live-clock .date {
+        display: none
+      }
+
+      .live-controls {
+        left: 12px;
+        right: 12px
+      }
+
+      .detail-title .ip {
+        font-size: 20px
+      }
+
+      .detail-title .verdict {
+        font-size: 12px;
+        padding: 5px 10px
+      }
+    }
+  </style>
 </head>
+
 <body>
 
-<header>
-  <div class="brand">
-    <svg viewBox="0 0 48 48" fill="none"><path d="M24 3L6 11V23C6 34 14 43 24 46C34 43 42 34 42 23V11L24 3Z" stroke="currentColor" stroke-width="2.4"/><path d="M16 24L21 29L33 17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div class="brand-text"><h1>Shakalaka</h1><span class="model-badge" id="modelBadge">Connecting…</span></div>
-  </div>
-  <div class="live-controls" id="navMenu">
-    <select id="interfaceSelect" class="live-select sensor-control" aria-label="Network interface"><option value="">Interface…</option></select>
-    <button id="liveToggle" class="live-btn toggle sensor-control" type="button" disabled>▶ Start</button>
-    <span class="live-status sensor-control" id="liveStatus">Connecting…</span>
-  </div>
-  <div class="live-clock" id="liveClock" aria-label="Live date and time">
-    <div class="time" id="liveClockTime">--:--:--</div>
-    <div class="date" id="liveClockDate">Loading date…</div>
-  </div>
-  <button class="hamburger" id="navToggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="navMenu"><span></span><span></span><span></span></button>
-</header>
+  <header>
+    <div class="brand">
+      <svg viewBox="0 0 48 48" fill="none">
+        <path d="M24 3L6 11V23C6 34 14 43 24 46C34 43 42 34 42 23V11L24 3Z" stroke="currentColor" stroke-width="2.4" />
+        <path d="M16 24L21 29L33 17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
+          stroke-linejoin="round" />
+      </svg>
+      <div class="brand-text">
+        <h1>Shakalaka</h1><span class="model-badge" id="modelBadge">Connecting…</span>
+      </div>
+    </div>
+    <div class="live-controls" id="navMenu">
+      <select id="interfaceSelect" class="live-select sensor-control" aria-label="Network interface">
+        <option value="">Interface…</option>
+      </select>
+      <button id="liveToggle" class="live-btn toggle sensor-control" type="button" disabled>▶ Start</button>
+      <span class="live-status sensor-control" id="liveStatus">Connecting…</span>
+    </div>
+    <div class="live-clock" id="liveClock" aria-label="Live date and time">
+      <div class="time" id="liveClockTime">--:--:--</div>
+      <div class="date" id="liveClockDate">Loading date…</div>
+    </div>
+    <button class="hamburger" id="navToggle" type="button" aria-label="Open menu" aria-expanded="false"
+      aria-controls="navMenu"><span></span><span></span><span></span></button>
+  </header>
 
-<div class="shell">
-  <div class="stats" id="statStrip"></div>
+  <div class="shell">
+    <div class="stats" id="statStrip"></div>
 
-  <section class="response-panel" id="responsePanel" hidden>
-    <div><div class="response-title" id="responseTitle">Threat response available</div><div class="response-detail" id="responseDetail"></div><div class="response-meta" id="responseMeta"></div></div>
-    <div><button class="live-btn" id="responseBlock">Block IP</button><button class="live-btn secondary" id="responseIgnore">Ignore</button></div>
-  </section>
+    <section class="response-panel" id="responsePanel" hidden>
+      <div>
+        <div class="response-title" id="responseTitle">Threat response available</div>
+        <div class="response-detail" id="responseDetail"></div>
+        <div class="response-meta" id="responseMeta"></div>
+      </div>
+      <div><button class="live-btn" id="responseBlock">Block IP</button><button class="live-btn secondary"
+          id="responseIgnore">Ignore</button></div>
+    </section>
 
-  <div class="threat-modal-backdrop" id="threatModal" hidden>
-    <div class="threat-modal" role="dialog" aria-modal="true" aria-labelledby="threatModalTitle">
-      <div class="kicker">Threat response request</div><h3 id="threatModalTitle">High threat detected</h3>
-      <div class="score" id="threatModalScore">93%</div>
-      <div class="meta" id="threatModalMeta">Source <strong>—</strong><br>Predicted threat <strong>—</strong><br>Model <strong>—</strong></div>
-      <div class="actions"><button class="ignore" id="threatModalIgnore" type="button">Ignore</button><button class="block" id="threatModalBlock" type="button">Block IP</button></div>
+    <div class="threat-modal-backdrop" id="threatModal" hidden>
+      <div class="threat-modal" role="dialog" aria-modal="true" aria-labelledby="threatModalTitle">
+        <div class="kicker">Threat response request</div>
+        <h3 id="threatModalTitle">High threat detected</h3>
+        <div class="score" id="threatModalScore">93%</div>
+        <div class="meta" id="threatModalMeta">Source <strong>—</strong><br>Predicted threat <strong>—</strong><br>Model
+          <strong>—</strong></div>
+        <div class="actions"><button class="ignore" id="threatModalIgnore" type="button">Ignore</button><button
+            class="block" id="threatModalBlock" type="button">Block IP</button></div>
+      </div>
+    </div>
+
+    <div class="workspace">
+      <!-- left: who is attacking -->
+      <section class="panel flagged-panel">
+        <div class="panel-head">
+          <h2>Flagged sources</h2><span class="count" id="sourceCount">0 sources</span>
+        </div>
+        <div class="source-list" id="sourceList"></div>
+      </section>
+
+      <!-- right: Logs tab / Analysis tab (Gemini) -->
+      <section class="panel detail-panel">
+        <div class="panel-head">
+          <div class="tabs" role="tablist" aria-label="Source views">
+            <button class="tab" id="tabLogs" type="button" role="tab" aria-selected="true" aria-controls="paneLogs"
+              data-tab="logs">Logs</button>
+            <button class="tab" id="tabAnalysis" type="button" role="tab" aria-selected="false"
+              aria-controls="paneAnalysis" data-tab="analysis">✦ Analysis</button>
+          </div>
+          <span class="count" id="logHeaderId">All flows</span>
+        </div>
+
+        <div class="tab-pane" id="paneLogs" role="tabpanel" aria-labelledby="tabLogs">
+          <div class="source-detail" id="sourceDetail" hidden></div>
+          <div id="logBody">
+            <div class="empty">No logged flows yet. Press Start to begin live monitoring.</div>
+          </div>
+        </div>
+
+        <div class="tab-pane" id="paneAnalysis" role="tabpanel" aria-labelledby="tabAnalysis" hidden>
+          <div class="gemini-bar"><span class="gemini-status" id="geminiStatus">Gemini: checking</span></div>
+          <div class="chat-log" id="chatLog">
+            <div class="chat-row bot">
+              <div class="bubble">Select a flagged source to see what Gemini thinks about it.</div>
+            </div>
+          </div>
+          <div class="chat-foot">
+            <div class="quick-qs" id="quickQs">
+              <button type="button" class="quick-q" data-q="Why was this source flagged?">Why was it flagged?</button>
+              <button type="button" class="quick-q" data-q="Should I block this IP?">Should I block it?</button>
+              <button type="button" class="quick-q" data-q="What is this source targeting?">What is it
+                targeting?</button>
+            </div>
+            <form class="chat-input-row" id="chatForm"><input class="chat-input" id="chatInput" type="text"
+                placeholder="Ask a follow-up question…" autocomplete="on"><button class="chat-send" type="submit"
+                id="chatSend">Ask</button></form>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 
-  <div class="workspace">
-    <!-- left: who is attacking -->
-    <section class="panel flagged-panel">
-      <div class="panel-head"><h2>Flagged sources</h2><span class="count" id="sourceCount">0 sources</span></div>
-      <div class="source-list" id="sourceList"></div>
-    </section>
+  <script>
+    /* ============================================================
+       BACKEND CONTRACT — see dashboard.py
+    
+       GET  /api/stats                     -> { flows_analyzed, flows_analyzed_window,
+                                                  flagged, flagged_sources, avg_confidence, model }
+       GET  /api/groups                    -> [{ group_id, src_ip, host, request_count,
+                                                  label, confidence, last_seen }]
+       GET  /api/logs                      -> all currently loaded flows
+       GET  /api/groups/<id>/logs          -> [{ id, timestamp, src_ip, dst_ip, dst_port,
+                                                  protocol, confidence, label,
+                                                  packets_per_sec, why[], features[] }]
+       GET  /api/groups/<id>/analysis      -> { lead, bullets[], label, confidence }
+       GET  /api/groups/<id>/chat/history  -> [{ sender: "user"|"bot", lead, bullets? }, ...]
+       POST /api/groups/<id>/chat          body: { message }
+                                            -> { lead, bullets? }
+    
+       Sensor control (Start / Stop / status / response) goes through the Flask
+       proxy at /live-api/api/live/*  ->  FastAPI sensor. Live data only.
+       ============================================================ */
 
-    <!-- right: Logs tab / Analysis tab (Gemini) -->
-    <section class="panel detail-panel">
-      <div class="panel-head">
-        <div class="tabs" role="tablist" aria-label="Source views">
-          <button class="tab" id="tabLogs" type="button" role="tab" aria-selected="true" aria-controls="paneLogs" data-tab="logs">Logs</button>
-          <button class="tab" id="tabAnalysis" type="button" role="tab" aria-selected="false" aria-controls="paneAnalysis" data-tab="analysis">✦ Analysis</button>
-        </div>
-        <span class="count" id="logHeaderId">All flows</span>
-      </div>
+    const LIVE_API = {{ live_api| tojson }};   // direct sensor URL, used only for the WebSocket
+    const LIVE_PROXY = '/live-api';           // same-origin proxy for every REST call
+    let liveSocket = null;
+    let liveThreats = 0;
+    let liveModelLabel = 'Offline';
+    let latestThreatScore = 0;
+    let latestMlPrediction = null;
+    let latestThreatSource = null;
+    let lastPromptedScore = null;
+    const ignoredIps = new Set();
 
-      <div class="tab-pane" id="paneLogs" role="tabpanel" aria-labelledby="tabLogs">
-        <div class="source-detail" id="sourceDetail" hidden></div>
-        <div id="logBody"><div class="empty">No logged flows yet. Press Start to begin live monitoring.</div></div>
-      </div>
+    // Threat headline state: keep the newest 50 flagged sources, wait 2 seconds
+    // for asynchronous ML/rule evidence to settle, then show the strongest source.
+    const recentFlaggedSources = new Map();
+    let threatDisplayTimer = null;
+    const THREAT_DISPLAY_DELAY_MS = 2000;
+    const MAX_FLAGGED_SOURCES = 50;
+    const ignoredSourceRecords = new Set();
 
-      <div class="tab-pane" id="paneAnalysis" role="tabpanel" aria-labelledby="tabAnalysis" hidden>
-        <div class="gemini-bar"><span class="gemini-status" id="geminiStatus">Gemini: checking</span></div>
-        <div class="chat-log" id="chatLog"><div class="chat-row bot"><div class="bubble">Select a flagged source to see what Gemini thinks about it.</div></div></div>
-        <div class="chat-foot">
-          <div class="quick-qs" id="quickQs">
-            <button type="button" class="quick-q" data-q="Why was this source flagged?">Why was it flagged?</button>
-            <button type="button" class="quick-q" data-q="Should I block this IP?">Should I block it?</button>
-            <button type="button" class="quick-q" data-q="What is this source targeting?">What is it targeting?</button>
-          </div>
-          <form class="chat-input-row" id="chatForm"><input class="chat-input" id="chatInput" type="text" placeholder="Ask a follow-up question…" autocomplete="on"><button class="chat-send" type="submit" id="chatSend">Ask</button></form>
-        </div>
-      </div>
-    </section>
-  </div>
-</div>
+    /* --- text helpers (escape + light markdown for Gemini replies) --- */
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function richText(s) {
+      return escapeHtml(s)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\n/g, '<br>');
+    }
 
-<script>
-/* ============================================================
-   BACKEND CONTRACT — see dashboard.py
-
-   GET  /api/stats                     -> { flows_analyzed, flows_analyzed_window,
-                                              flagged, flagged_sources, avg_confidence, model }
-   GET  /api/groups                    -> [{ group_id, src_ip, host, request_count,
-                                              label, confidence, last_seen }]
-   GET  /api/logs                      -> all currently loaded flows
-   GET  /api/groups/<id>/logs          -> [{ id, timestamp, src_ip, dst_ip, dst_port,
-                                              protocol, confidence, label,
-                                              packets_per_sec, why[], features[] }]
-   GET  /api/groups/<id>/analysis      -> { lead, bullets[], label, confidence }
-   GET  /api/groups/<id>/chat/history  -> [{ sender: "user"|"bot", lead, bullets? }, ...]
-   POST /api/groups/<id>/chat          body: { message }
-                                        -> { lead, bullets? }
-
-   Sensor control (Start / Stop / status / response) goes through the Flask
-   proxy at /live-api/api/live/*  ->  FastAPI sensor. Live data only.
-   ============================================================ */
-
-const LIVE_API = {{ live_api|tojson }};   // direct sensor URL, used only for the WebSocket
-const LIVE_PROXY = '/live-api';           // same-origin proxy for every REST call
-let liveSocket = null;
-let liveThreats = 0;
-let liveModelLabel = 'Offline';
-let latestThreatScore = 0;
-let latestMlPrediction = null;
-let latestThreatSource = null;
-let lastPromptedScore = null;
-const ignoredIps = new Set();
-
-// Threat headline state: keep the newest 50 flagged sources, wait 2 seconds
-// for asynchronous ML/rule evidence to settle, then show the strongest source.
-const recentFlaggedSources = new Map();
-let threatDisplayTimer = null;
-const THREAT_DISPLAY_DELAY_MS = 2000;
-const MAX_FLAGGED_SOURCES = 50;
-const ignoredSourceRecords = new Set();
-
-/* --- text helpers (escape + light markdown for Gemini replies) --- */
-function escapeHtml(s){
-  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function richText(s){
-  return escapeHtml(s)
-    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-    .replace(/`([^`]+)`/g,'<code>$1</code>')
-    .replace(/\n/g,'<br>');
-}
-
-/* --- tabs: Logs | Analysis (Gemini) --- */
-function setTab(name){
-  const analysis = name === 'analysis';
-  document.getElementById('paneLogs').hidden = analysis;
-  document.getElementById('paneAnalysis').hidden = !analysis;
-  document.getElementById('tabLogs').setAttribute('aria-selected', String(!analysis));
-  document.getElementById('tabAnalysis').setAttribute('aria-selected', String(analysis));
-  if(analysis){
-    // Rows added while the pane was hidden have no layout yet, so jump to the latest message now.
-    const log = document.getElementById('chatLog');
-    log.scrollTop = log.scrollHeight;
-  }
-}
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => setTab(tab.dataset.tab));
-});
-setTab('logs');
-
-/* --- nav: single Start/Stop toggle --- */
-let liveRunning = false;
-let toggleBusy = false;
-function setToggle(running, apiOk = true){
-  liveRunning = running;
-  const btn = document.getElementById('liveToggle');
-  if(!btn) return;
-  btn.textContent = running ? '■ Stop' : '▶ Start';
-  btn.classList.toggle('running', running);
-  btn.disabled = !apiOk || toggleBusy;
-  btn.title = apiOk ? '' : 'Sensor API unreachable at '+LIVE_API+' — start the FastAPI backend first.';
-}
-function setStatus(text, state){
-  const st = document.getElementById('liveStatus');
-  if(!st) return;
-  st.textContent = text;
-  st.classList.toggle('on', state === 'on');
-  st.classList.toggle('offline', state === 'error');
-}
-
-function rememberFlaggedSources(flaggedGroups){
-  const now = Date.now();
-  flaggedGroups.forEach(g => {
-    const id = g.group_id || g.src_ip;
-    if(!id) return;
-    const score = Number(g.threat_score || 0);
-    if(score <= 0) return;
-    const existing = recentFlaggedSources.get(id) || {};
-    recentFlaggedSources.set(id, {
-      ...existing,
-      group_id: id,
-      src_ip: g.src_ip || id,
-      label: g.label || existing.label || 'THREAT',
-      host: g.host || existing.host || null,
-      threat_score: Math.max(Number(existing.threat_score || 0), score),
-      last_seen: g.last_seen || existing.last_seen || '—',
-      last_seen_epoch: Number(g.last_seen_epoch || existing.last_seen_epoch || 0),
-      observed_at: now
+    /* --- tabs: Logs | Analysis (Gemini) --- */
+    function setTab(name) {
+      const analysis = name === 'analysis';
+      document.getElementById('paneLogs').hidden = analysis;
+      document.getElementById('paneAnalysis').hidden = !analysis;
+      document.getElementById('tabLogs').setAttribute('aria-selected', String(!analysis));
+      document.getElementById('tabAnalysis').setAttribute('aria-selected', String(analysis));
+      if (analysis) {
+        // Rows added while the pane was hidden have no layout yet, so jump to the latest message now.
+        const log = document.getElementById('chatLog');
+        log.scrollTop = log.scrollHeight;
+      }
+    }
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => setTab(tab.dataset.tab));
     });
-  });
+    setTab('logs');
 
-  // Keep only the 50 most recently observed flagged sources.
-  const keep = [...recentFlaggedSources.values()]
-    .sort((a,b) => (b.last_seen_epoch - a.last_seen_epoch) || (b.observed_at - a.observed_at))
-    .slice(0, MAX_FLAGGED_SOURCES);
-  recentFlaggedSources.clear();
-  keep.forEach(item => recentFlaggedSources.set(item.group_id, item));
-}
+    /* --- nav: single Start/Stop toggle --- */
+    let liveRunning = false;
+    let toggleBusy = false;
+    function setToggle(running, apiOk = true) {
+      liveRunning = running;
+      const btn = document.getElementById('liveToggle');
+      if (!btn) return;
+      btn.textContent = running ? '■ Stop' : '▶ Start';
+      btn.classList.toggle('running', running);
+      btn.disabled = !apiOk || toggleBusy;
+      btn.title = apiOk ? '' : 'Sensor API unreachable at ' + LIVE_API + ' — start the FastAPI backend first.';
+    }
+    function setStatus(text, state) {
+      const st = document.getElementById('liveStatus');
+      if (!st) return;
+      st.textContent = text;
+      st.classList.toggle('on', state === 'on');
+      st.classList.toggle('offline', state === 'error');
+    }
 
-function rememberMlThreat(prediction, score){
-  const ip = prediction && (prediction.src_ip || prediction.source_ip);
-  if(!ip || Number(score || 0) <= 0) return;
-  const existing = recentFlaggedSources.get(ip) || {
-    group_id: ip, src_ip: ip, label: 'THREAT', observed_at: Date.now()
-  };
-  const numericScore = Number(score || 0);
-  if(numericScore >= Number(existing.threat_score || 0)){
-    existing.threat_score = numericScore;
-    existing.label = prediction.label || existing.label || 'THREAT';
-  }
-  existing.observed_at = Date.now();
-  recentFlaggedSources.set(ip, existing);
-  const keep=[...recentFlaggedSources.values()]
-    .sort((a,b)=>(Number(b.last_seen_epoch||0)-Number(a.last_seen_epoch||0))||(b.observed_at-a.observed_at))
-    .slice(0,MAX_FLAGGED_SOURCES);
-  recentFlaggedSources.clear();
-  keep.forEach(item=>recentFlaggedSources.set(item.group_id,item));
-}
+    function rememberFlaggedSources(flaggedGroups) {
+      const now = Date.now();
+      flaggedGroups.forEach(g => {
+        const id = g.group_id || g.src_ip;
+        if (!id) return;
+        const score = Number(g.threat_score || 0);
+        if (score <= 0) return;
+        const existing = recentFlaggedSources.get(id) || {};
+        recentFlaggedSources.set(id, {
+          ...existing,
+          group_id: id,
+          src_ip: g.src_ip || id,
+          label: g.label || existing.label || 'THREAT',
+          host: g.host || existing.host || null,
+          threat_score: Math.max(Number(existing.threat_score || 0), score),
+          last_seen: g.last_seen || existing.last_seen || '—',
+          last_seen_epoch: Number(g.last_seen_epoch || existing.last_seen_epoch || 0),
+          observed_at: now
+        });
+      });
 
-function scheduleThreatHeadline(){
-  clearTimeout(threatDisplayTimer);
-  threatDisplayTimer=setTimeout(renderDelayedThreatHeadline, THREAT_DISPLAY_DELAY_MS);
-}
+      // Keep only the 50 most recently observed flagged sources.
+      const keep = [...recentFlaggedSources.values()]
+        .sort((a, b) => (b.last_seen_epoch - a.last_seen_epoch) || (b.observed_at - a.observed_at))
+        .slice(0, MAX_FLAGGED_SOURCES);
+      recentFlaggedSources.clear();
+      keep.forEach(item => recentFlaggedSources.set(item.group_id, item));
+    }
 
-function renderDelayedThreatHeadline(){
-  const candidates=[...recentFlaggedSources.values()]
-    .filter(s => Number(s.threat_score || 0) > 0 && !ignoredSourceRecords.has(s.group_id))
-    .sort((a,b)=>Number(b.threat_score||0)-Number(a.threat_score||0));
+    function rememberMlThreat(prediction, score) {
+      const ip = prediction && (prediction.src_ip || prediction.source_ip);
+      if (!ip || Number(score || 0) <= 0) return;
+      const existing = recentFlaggedSources.get(ip) || {
+        group_id: ip, src_ip: ip, label: 'THREAT', observed_at: Date.now()
+      };
+      const numericScore = Number(score || 0);
+      if (numericScore >= Number(existing.threat_score || 0)) {
+        existing.threat_score = numericScore;
+        existing.label = prediction.label || existing.label || 'THREAT';
+      }
+      existing.observed_at = Date.now();
+      recentFlaggedSources.set(ip, existing);
+      const keep = [...recentFlaggedSources.values()]
+        .sort((a, b) => (Number(b.last_seen_epoch || 0) - Number(a.last_seen_epoch || 0)) || (b.observed_at - a.observed_at))
+        .slice(0, MAX_FLAGGED_SOURCES);
+      recentFlaggedSources.clear();
+      keep.forEach(item => recentFlaggedSources.set(item.group_id, item));
+    }
 
-  const strongest=candidates[0] || null;
-  latestThreatSource=strongest;
-  latestThreatScore=strongest ? Number(strongest.threat_score||0) : 0;
+    function scheduleThreatHeadline() {
+      clearTimeout(threatDisplayTimer);
+      threatDisplayTimer = setTimeout(renderDelayedThreatHeadline, THREAT_DISPLAY_DELAY_MS);
+    }
 
-  if(strongest){
-    latestMlPrediction={
-      ...(latestMlPrediction || {}),
-      src_ip: strongest.src_ip,
-      label: strongest.label || 'THREAT',
-      model: strongest.model || (latestMlPrediction && latestMlPrediction.model) || 'UNIDIRECTIONAL ML'
-    };
-  }
-  renderThreatScoreStat();
-  updateResponsePanel();
-}
+    function renderDelayedThreatHeadline() {
+      const candidates = [...recentFlaggedSources.values()]
+        .filter(s => Number(s.threat_score || 0) > 0 && !ignoredSourceRecords.has(s.group_id))
+        .sort((a, b) => Number(b.threat_score || 0) - Number(a.threat_score || 0));
 
-async function focusThreatSource(){
-  const source=latestThreatSource;
-  if(!source) return;
-  await selectGroup(source.group_id);
-  const row=document.querySelector('.source-row[data-id="'+CSS.escape(source.group_id)+'"]');
-  if(row){
-    row.classList.add('threat-target');
-    row.scrollIntoView({behavior:'smooth',block:'center'});
-    setTimeout(()=>row.classList.remove('threat-target'),1800);
-  }
-}
-const handledResponseIps = new Set();
-let responseActionInFlight = false;
-const RESPONSE_THRESHOLD = 92;
+      const strongest = candidates[0] || null;
+      latestThreatSource = strongest;
+      latestThreatScore = strongest ? Number(strongest.threat_score || 0) : 0;
 
-function updateLiveClock(){
-  const now = new Date();
-  const time = now.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  });
-  const date = now.toLocaleDateString([], {
-    weekday: 'short',
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric'
-  });
-  const timeEl = document.getElementById('liveClockTime');
-  const dateEl = document.getElementById('liveClockDate');
-  if(timeEl) timeEl.textContent = time;
-  if(dateEl) dateEl.textContent = date;
-}
-
-updateLiveClock();
-setInterval(updateLiveClock, 1000);
-
-/* --- interface dropdown: rebuilt only when the list actually changes,
-       so it never collapses under the user's cursor --- */
-let interfaceSignature = '';
-function populateInterfaces(status){
-  const details=(status&&status.interface_details)||[];
-  const sig=details.map(i=>i.name+':'+(i.usable?1:0)).join('|');
-  if(sig===interfaceSignature) return;
-  interfaceSignature=sig;
-  const select=document.getElementById('interfaceSelect');
-  const current=select.value;
-  [...select.options].slice(1).forEach(o => o.remove());
-  details.forEach(i=>{
-    const o=document.createElement('option');
-    o.value=i.name;
-    const state=i.usable ? 'ready' : (i.reason || 'unavailable');
-    o.textContent=(i.display_name||i.name)+' ('+i.kind+', '+state+')';
-    o.disabled=!i.usable;
-    select.appendChild(o);
-  });
-  if(current && details.some(i=>i.name===current && i.usable)) select.value=current;
-  else {
-    const ready=details.find(i=>i.usable);
-    if(ready) select.value=ready.name;
-  }
-}
-
-async function loadLiveStatus(){
-  try{
-    const res=await fetch(LIVE_PROXY+'/api/live/status',{cache:'no-store'});
-    if(!res.ok) throw new Error('Live status request failed ('+res.status+')');
-    const s=await res.json();
-    const running=!!s.running;
-
-    document.querySelectorAll('.sensor-control').forEach(el=>el.hidden=false);
-    setStatus(running?'Live':'Offline', running?'on':'');
-    setToggle(running, true);
-    const select=document.getElementById('interfaceSelect');
-    select.disabled=running;
-
-    populateInterfaces(s);
-    if(running && s.interface) select.value=s.interface;
-
-    const loaded=(s.models&&s.models.loaded_models)||[];
-    // Only take the sensor's score when it actually reports one — otherwise the
-    // 2s poll would wipe the headline threat score back to 0.
-    const latest=s.latest_ml;
-    if(latest && latest.score!=null){
-      latestThreatScore=Number(latest.score||0);
-      if(latest.prediction){
-        latestMlPrediction=latest.prediction;
-        if(latest.source_ip) latestMlPrediction.src_ip=latest.source_ip;
+      if (strongest) {
+        latestMlPrediction = {
+          ...(latestMlPrediction || {}),
+          src_ip: strongest.src_ip,
+          label: strongest.label || 'THREAT',
+          model: strongest.model || (latestMlPrediction && latestMlPrediction.model) || 'UNIDIRECTIONAL ML'
+        };
       }
       updateResponsePanel();
     }
-    liveModelLabel = loaded.length
-      ? 'Unidirectional ML, '+loaded.length+' model'+(loaded.length===1?'':'s')
-      : 'Rules only, ML ready';
-    document.getElementById('modelBadge').textContent = liveModelLabel;
 
-    if(running) connectLiveSocket();
-    else if(liveSocket){
-      try{ liveSocket.close(); }catch(e){}
-      liveSocket=null;
-    }
-    return s;
-  }catch(e){
-    // Flask dashboard stays open even if the FastAPI sensor is down.
-    // The toggle stays visible but disabled; it re-enables automatically
-    // as soon as the sensor API answers again.
-    document.querySelectorAll('.sensor-control').forEach(el=>el.hidden=false);
-    setStatus('Sensor API offline','error');
-    setToggle(false, false);
-    document.getElementById('modelBadge').textContent='Sensor API offline';
-    if(liveSocket){
-      try{ liveSocket.close(); }catch(err){}
-      liveSocket=null;
-    }
-    return null;
-  }
-}
-
-let liveStatusPollTimer = null;
-function startLiveStatusPolling(){
-  if(liveStatusPollTimer) clearInterval(liveStatusPollTimer);
-  // Keep Live/Offline/API offline synchronized even when the user does
-  // not interact with the Start/Stop button.
-  liveStatusPollTimer = setInterval(loadLiveStatus, 2000);
-}
-
-function connectLiveSocket(){
-  if(liveSocket && (liveSocket.readyState===WebSocket.OPEN || liveSocket.readyState===WebSocket.CONNECTING)) return;
-  const apiUrl=new URL(LIVE_API,window.location.origin); const wsProtocol=apiUrl.protocol==='https:'?'wss:':'ws:'; liveSocket=new WebSocket(wsProtocol+'//'+apiUrl.host+'/ws/threats');
-  liveSocket.onmessage=(event)=>{
-    try{
-      const data=JSON.parse(event.data);
-      if(data.event==='live_threat'){
-        if(data.type==='threat_score'){
-          if(data.prediction) latestMlPrediction=data.prediction;
-          else if(data.source_ip && latestMlPrediction) latestMlPrediction.src_ip=data.source_ip;
-          rememberMlThreat(latestMlPrediction || data, Number(data.score || 0));
-          scheduleThreatHeadline();
-          handleThreatScoreUpdate(data.score);
-          if(data.response_available && latestThreatScore!==lastPromptedScore){
-            lastPromptedScore=latestThreatScore;
-          }
-          loadStats();
-        }
-        if(data.type==='ml_prediction' && String(data.label||'').toLowerCase()!=='benign'){
-          latestMlPrediction=data;
-          rememberMlThreat(data, Number(data.score || data.threat_score || data.confidence*100 || 0));
-          scheduleThreatHeadline();
-        }
-        liveThreats++;
-        const badge=document.getElementById('sourceCount');
-        badge.textContent=badge.textContent.split(',')[0]+', '+liveThreats+' live';
-        loadStats(); loadGroups();
+    async function focusThreatSource() {
+      const ip = topRecent && topRecent.src_ip;
+      if (!ip) return;
+      await selectGroup(ip);
+      const row = document.querySelector('.source-row[data-id="' + CSS.escape(ip) + '"]');
+      if (row) {
+        row.classList.add('threat-target');
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => row.classList.remove('threat-target'), 1800);
       }
-      if(data.event==='connected' && data.live){
-        const running=!!data.live.running;
-        setStatus(running?'Live':'Offline', running?'on':'');
+    }
+    const handledResponseIps = new Set();
+    let responseActionInFlight = false;
+    const RESPONSE_THRESHOLD = 92;
+
+    function updateLiveClock() {
+      const now = new Date();
+      const time = now.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      const date = now.toLocaleDateString([], {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      });
+      const timeEl = document.getElementById('liveClockTime');
+      const dateEl = document.getElementById('liveClockDate');
+      if (timeEl) timeEl.textContent = time;
+      if (dateEl) dateEl.textContent = date;
+    }
+
+    updateLiveClock();
+    setInterval(updateLiveClock, 1000);
+
+    /* --- interface dropdown: rebuilt only when the list actually changes,
+           so it never collapses under the user's cursor --- */
+    let interfaceSignature = '';
+    function populateInterfaces(status) {
+      const details = (status && status.interface_details) || [];
+      const sig = details.map(i => i.name + ':' + (i.usable ? 1 : 0)).join('|');
+      if (sig === interfaceSignature) return;
+      interfaceSignature = sig;
+      const select = document.getElementById('interfaceSelect');
+      const current = select.value;
+      [...select.options].slice(1).forEach(o => o.remove());
+      details.forEach(i => {
+        const o = document.createElement('option');
+        o.value = i.name;
+        const state = i.usable ? 'ready' : (i.reason || 'unavailable');
+        o.textContent = (i.display_name || i.name) + ' (' + i.kind + ', ' + state + ')';
+        o.disabled = !i.usable;
+        select.appendChild(o);
+      });
+      if (current && details.some(i => i.name === current && i.usable)) select.value = current;
+      else {
+        const ready = details.find(i => i.usable);
+        if (ready) select.value = ready.name;
+      }
+    }
+
+    async function loadLiveStatus() {
+      try {
+        const res = await fetch(LIVE_PROXY + '/api/live/status', { cache: 'no-store' });
+        if (!res.ok) throw new Error('Live status request failed (' + res.status + ')');
+        const s = await res.json();
+        const running = !!s.running;
+
+        document.querySelectorAll('.sensor-control').forEach(el => el.hidden = false);
+        setStatus(running ? 'Live' : 'Offline', running ? 'on' : '');
         setToggle(running, true);
+        const select = document.getElementById('interfaceSelect');
+        select.disabled = running;
+
+        populateInterfaces(s);
+        if (running && s.interface) select.value = s.interface;
+
+        const loaded = (s.models && s.models.loaded_models) || [];
+        // Only take the sensor's score when it actually reports one — otherwise the
+        // 2s poll would wipe the headline threat score back to 0.
+        const latest = s.latest_ml;
+        if (latest && latest.score != null) {
+          latestThreatScore = Number(latest.score || 0);
+          if (latest.prediction) {
+            latestMlPrediction = latest.prediction;
+            if (latest.source_ip) latestMlPrediction.src_ip = latest.source_ip;
+          }
+          updateResponsePanel();
+        }
+        liveModelLabel = loaded.length
+          ? 'Unidirectional ML, ' + loaded.length + ' model' + (loaded.length === 1 ? '' : 's')
+          : 'Rules only, ML ready';
+        document.getElementById('modelBadge').textContent = liveModelLabel;
+
+        if (running) connectLiveSocket();
+        else if (liveSocket) {
+          try { liveSocket.close(); } catch (e) { }
+          liveSocket = null;
+        }
+        return s;
+      } catch (e) {
+        // Flask dashboard stays open even if the FastAPI sensor is down.
+        // The toggle stays visible but disabled; it re-enables automatically
+        // as soon as the sensor API answers again.
+        document.querySelectorAll('.sensor-control').forEach(el => el.hidden = false);
+        setStatus('Sensor API offline', 'error');
+        setToggle(false, false);
+        document.getElementById('modelBadge').textContent = 'Sensor API offline';
+        if (liveSocket) {
+          try { liveSocket.close(); } catch (err) { }
+          liveSocket = null;
+        }
+        return null;
       }
-    }catch(e){}
-  };
-  liveSocket.onclose=()=>{liveSocket=null};
-}
-
-async function loadGeminiStatus(){
-  const badge=document.getElementById('geminiStatus');
-  try{
-    const res=await fetch('/api/gemini/status',{cache:'no-store'});
-    const data=await res.json();
-    if(data.configured){ badge.textContent='Gemini ready ('+data.model+')'; badge.classList.add('ready'); }
-    else { badge.textContent='Gemini: API key missing'; badge.classList.remove('ready'); }
-  }catch(e){ badge.textContent='Gemini: backend error'; badge.classList.remove('ready'); }
-}
-
-async function startLive(){
-  handledResponseIps.clear();
-  ignoredIps.clear();
-  latestThreatScore=0;
-  latestMlPrediction=null;
-  latestThreatSource=null;
-  recentFlaggedSources.clear();
-  clearTimeout(threatDisplayTimer);
-  hideThreatModal();
-  const select=document.getElementById('interfaceSelect');
-  const iface=select.value;
-  if(!iface){alert('Select a usable network interface first.');return}
-  const option=select.options[select.selectedIndex];
-  if(option && option.disabled){alert('This interface is not suitable for live capture. Pick another one.');return}
-  toggleBusy=true;
-  setToggle(liveRunning, true);
-  setStatus('Starting…','');
-  try{
-    const res=await fetch(LIVE_PROXY+'/api/live/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interface:iface})});
-    const data=await res.json().catch(()=>({}));
-    if(!res.ok) throw new Error(data.detail||data.error||'Unable to start live monitoring');
-    toggleBusy=false;
-    await loadLiveStatus();
-    loadStats(); loadGroups(); loadAllLogs();
-  }catch(e){
-    toggleBusy=false;
-    await loadLiveStatus();
-    alert(e.message);
-  }
-}
-
-function currentThreatIp(){
-  return (latestMlPrediction && (latestMlPrediction.src_ip || latestMlPrediction.source_ip)) || null;
-}
-function updateResponsePanel(){
-  const panel=document.getElementById('responsePanel'); if(!panel) return;
-  const ip=currentThreatIp();
-  const eligible=latestThreatScore>=RESPONSE_THRESHOLD && !!ip && !ignoredIps.has(ip) && !handledResponseIps.has(ip);
-  panel.hidden=!eligible;
-  if(!eligible) return;
-  const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
-  const model=latestMlPrediction&&latestMlPrediction.model?latestMlPrediction.model:'Unidirectional ML';
-  document.getElementById('responseTitle').textContent='Threat response available';
-  document.getElementById('responseDetail').textContent=label+' detected from '+ip+', score '+latestThreatScore.toFixed(0)+'%';
-  document.getElementById('responseMeta').textContent=model+', '+RESPONSE_THRESHOLD+'% threshold. Manual confirmation only, nothing is blocked automatically.';
-}
-function showThreatModal(){
-  const modal=document.getElementById('threatModal');
-  const ip=currentThreatIp();
-  if(!modal || !ip || latestThreatScore < RESPONSE_THRESHOLD || ignoredIps.has(ip) || handledResponseIps.has(ip) || responseActionInFlight) return;
-  const label=latestMlPrediction&&latestMlPrediction.label?latestMlPrediction.label:'THREAT';
-  const model=latestMlPrediction&&latestMlPrediction.model?latestMlPrediction.model:'Unidirectional ML';
-  document.getElementById('threatModalScore').textContent=latestThreatScore.toFixed(0)+'%';
-  document.getElementById('threatModalMeta').innerHTML='Source <strong>'+escapeHtml(ip)+'</strong><br>Predicted threat <strong>'+escapeHtml(label)+'</strong><br>Model <strong>'+escapeHtml(model)+'</strong><br>Manual confirmation required before blocking.';
-  modal.hidden=false;
-}
-function hideThreatModal(){
-  const modal=document.getElementById('threatModal');
-  if(modal) modal.hidden=true;
-}
-function handleThreatScoreUpdate(score){
-  const old=latestThreatScore;
-  latestThreatScore=Number(score||0);
-  updateResponsePanel();
-  if(
-    latestThreatScore >= RESPONSE_THRESHOLD &&
-    old <= RESPONSE_THRESHOLD &&
-    currentThreatIp() &&
-    !ignoredIps.has(currentThreatIp()) &&
-    !handledResponseIps.has(currentThreatIp()) &&
-    !responseActionInFlight
-  ){
-    showThreatModal();
-  }
-}
-async function blockCurrentThreat(){
-  const ip=currentThreatIp();
-  if(!ip || latestThreatScore<RESPONSE_THRESHOLD || handledResponseIps.has(ip) || responseActionInFlight) return;
-  const ok=window.confirm('Block source IP '+ip+' on this host?\n\nThreat score: '+latestThreatScore.toFixed(0)+'%\nAction requires your confirmation.');
-  if(!ok) return;
-  responseActionInFlight=true;
-  document.getElementById('threatModalBlock').disabled=true;
-  document.getElementById('threatModalIgnore').disabled=true;
-  document.getElementById('responseBlock').disabled=true;
-  hideThreatModal();
-  try{
-    const res=await fetch(LIVE_PROXY+'/api/live/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'block',ip})});
-    const data=await res.json().catch(()=>({})); if(!res.ok) throw new Error(data.detail||'Firewall action failed');
-    document.getElementById('responseTitle').textContent='Source IP blocked';
-    document.getElementById('responseDetail').textContent=ip+' was blocked on this host.';
-    document.getElementById('responseMeta').textContent='Manual response completed.';
-    handledResponseIps.add(ip);
-    document.getElementById('responsePanel').hidden=true;
-    hideThreatModal();
-  }catch(e){
-    document.getElementById('responseBlock').disabled=false;
-    document.getElementById('threatModalBlock').disabled=false;
-    document.getElementById('threatModalIgnore').disabled=false;
-    window.alert('Response failed: '+e.message);
-  }finally{
-    responseActionInFlight=false;
-  }
-}
-function ignoreCurrentThreat(){
-  const ip=currentThreatIp(); if(!ip || responseActionInFlight) return;
-  handledResponseIps.add(ip);
-  ignoredIps.add(ip);
-  hideThreatModal();
-  document.getElementById('responsePanel').hidden=true;
-  document.getElementById('responseBlock').disabled=false;
-  document.getElementById('threatModalBlock').disabled=false;
-  document.getElementById('threatModalIgnore').disabled=false;
-  lastPromptedScore=null;
-}
-async function stopLive(){
-  toggleBusy=true;
-  setToggle(liveRunning, true);
-  setStatus('Stopping…','');
-  try{
-    const res=await fetch(LIVE_PROXY+'/api/live/stop',{method:'POST'});
-    const data=await res.json().catch(()=>({}));
-    if(!res.ok) throw new Error(data.detail||'Unable to stop live monitoring');
-    toggleBusy=false;
-    await loadLiveStatus();
-    loadStats(); loadGroups();
-  }catch(e){
-    toggleBusy=false;
-    await loadLiveStatus();
-    alert(e.message);
-  }
-}
-
-document.getElementById('liveToggle').addEventListener('click',()=>{
-  if(toggleBusy) return;
-  liveRunning ? stopLive() : startLive();
-});
-document.getElementById('statStrip').addEventListener('click',(event)=>{
-  const stat=event.target.closest('.stat.threat-stat');
-  if(stat) focusThreatSource();
-});
-document.getElementById('statStrip').addEventListener('keydown',(event)=>{
-  const stat=event.target.closest('.stat.threat-stat');
-  if(stat && (event.key==='Enter' || event.key===' ')){
-    event.preventDefault();
-    focusThreatSource();
-  }
-});
-document.getElementById('responseBlock').addEventListener('click',blockCurrentThreat);
-document.getElementById('responseIgnore').addEventListener('click',ignoreCurrentThreat);
-document.getElementById('threatModalBlock').addEventListener('click',async()=>{
-  await blockCurrentThreat();
-  if(document.getElementById('responseBlock').disabled) hideThreatModal();
-});
-document.getElementById('threatModalIgnore').addEventListener('click',()=>{ ignoreCurrentThreat(); hideThreatModal(); });
-document.getElementById('threatModal').addEventListener('click',(event)=>{
-  if(event.target.id==='threatModal') hideThreatModal();
-});
-document.addEventListener('keydown',(event)=>{
-  if(event.key==='Escape') hideThreatModal();
-});
-
-let selectedGroup = null;
-let groups = [];
-
-/* --- helpers for null-safe rendering --- */
-function fmtConf(c){
-  if(c == null) return '—';
-  return (c*100).toFixed(0)+'%';
-}
-function sevColor(score){
-  return score >= 90 ? 'var(--red)' : score >= 70 ? 'var(--amber)' : 'var(--muted)';
-}
-
-function strongestRuleThreatScore(){
-  return groups.reduce((max, group) => {
-    return Math.max(max, Number(group.threat_score || 0));
-  }, 0);
-}
-
-function renderThreatScoreStat(){
-  const stat = document.querySelector('#statStrip .stat:nth-child(3)');
-  if(!stat) return;
-  const value = stat.querySelector('.value');
-  const sub = stat.querySelector('.sub');
-  const source = latestThreatSource;
-  if(value) value.textContent = latestThreatScore.toFixed(0)+'%';
-  if(sub){
-    sub.textContent = source
-      ? (source.label || 'THREAT')+' from '+(source.src_ip || 'unknown source')
-      : latestThreatScore > 0
-        ? 'Waiting for delayed source aggregation'
-        : 'Waiting for threat evidence';
-  }
-  stat.classList.toggle('flag', latestThreatScore>=RESPONSE_THRESHOLD);
-  stat.classList.add('threat-stat');
-  stat.setAttribute('role','button');
-  stat.setAttribute('tabindex','0');
-  stat.setAttribute('aria-label',source
-    ? 'Open strongest flagged source '+source.src_ip+' with threat score '+latestThreatScore.toFixed(0)+' percent'
-    : 'Threat score — no flagged source selected');
-}
-
-async function loadStats(){
-  try{
-    const res=await fetch('/api/stats');
-    const s=await res.json();
-    const total=s.flows_analyzed||0;
-    const flagPct=total>0?((s.flagged/total)*100).toFixed(1):'0.0';
-
-    // The global dashboard score is the strongest currently observed
-    // threat evidence: ML confidence when available, otherwise rule-based
-    // source evidence such as DDoS/scan/beaconing. This keeps the headline
-    // score live even when the rule detector fires before packet ML.
-    const latestMlScore = Number((s.latest_ml||{}).score || 0);
-    if(latestMlScore > 0 && latestMlPrediction){
-      rememberMlThreat(latestMlPrediction, latestMlScore);
     }
 
-    const strip=[
-      {icon:'◈',label:'Flows analyzed',value:total.toLocaleString(),sub:s.flows_analyzed_window||'Live flow count',cls:''},
-      {icon:'⚑',label:'Flagged flows',value:s.flagged||0,sub:(s.flagged_sources||0)+' sources, '+flagPct+'% of all flows',cls:'flag'},
-      {icon:'◎',label:'Highest threat score',value:latestThreatScore.toFixed(0)+'%',sub:latestThreatSource?(latestThreatSource.label+' from '+latestThreatSource.src_ip):'Waiting for threat evidence',cls:(latestThreatScore>=RESPONSE_THRESHOLD?'flag ':'')+'threat-stat'}
-    ];
-    document.getElementById('statStrip').innerHTML=strip.map(item=>`
-      <div class="stat ${item.cls}">
+    let liveStatusPollTimer = null;
+    function startLiveStatusPolling() {
+      if (liveStatusPollTimer) clearInterval(liveStatusPollTimer);
+      // Keep Live/Offline/API offline synchronized even when the user does
+      // not interact with the Start/Stop button.
+      liveStatusPollTimer = setInterval(loadLiveStatus, 2000);
+    }
+
+    function connectLiveSocket() {
+      if (liveSocket && (liveSocket.readyState === WebSocket.OPEN || liveSocket.readyState === WebSocket.CONNECTING)) return;
+      const apiUrl = new URL(LIVE_API, window.location.origin); const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:'; liveSocket = new WebSocket(wsProtocol + '//' + apiUrl.host + '/ws/threats');
+      liveSocket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.event === 'live_threat') {
+            if (data.type === 'threat_score') {
+              if (data.prediction) latestMlPrediction = data.prediction;
+              else if (data.source_ip && latestMlPrediction) latestMlPrediction.src_ip = data.source_ip;
+              rememberMlThreat(latestMlPrediction || data, Number(data.score || 0));
+              scheduleThreatHeadline();
+              handleThreatScoreUpdate(data.score);
+              if (data.response_available && latestThreatScore !== lastPromptedScore) {
+                lastPromptedScore = latestThreatScore;
+              }
+              loadStats();
+            }
+            if (data.type === 'ml_prediction' && String(data.label || '').toLowerCase() !== 'benign') {
+              latestMlPrediction = data;
+              rememberMlThreat(data, Number(data.score || data.threat_score || data.confidence * 100 || 0));
+              scheduleThreatHeadline();
+            }
+            liveThreats++;
+            const badge = document.getElementById('sourceCount');
+            badge.textContent = badge.textContent.split(',')[0] + ', ' + liveThreats + ' live';
+            loadStats(); loadGroups();
+          }
+          if (data.event === 'connected' && data.live) {
+            const running = !!data.live.running;
+            setStatus(running ? 'Live' : 'Offline', running ? 'on' : '');
+            setToggle(running, true);
+          }
+        } catch (e) { }
+      };
+      liveSocket.onclose = () => { liveSocket = null };
+    }
+
+    async function loadGeminiStatus() {
+      const badge = document.getElementById('geminiStatus');
+      try {
+        const res = await fetch('/api/gemini/status', { cache: 'no-store' });
+        const data = await res.json();
+        if (data.configured) { badge.textContent = 'Gemini ready (' + data.model + ')'; badge.classList.add('ready'); }
+        else { badge.textContent = 'Gemini: API key missing'; badge.classList.remove('ready'); }
+      } catch (e) { badge.textContent = 'Gemini: backend error'; badge.classList.remove('ready'); }
+    }
+
+    async function startLive() {
+      handledResponseIps.clear();
+      ignoredIps.clear();
+      latestThreatScore = 0;
+      latestMlPrediction = null;
+      latestThreatSource = null;
+      recentFlaggedSources.clear();
+      clearTimeout(threatDisplayTimer);
+      hideThreatModal();
+      const select = document.getElementById('interfaceSelect');
+      const iface = select.value;
+      if (!iface) { alert('Select a usable network interface first.'); return }
+      const option = select.options[select.selectedIndex];
+      if (option && option.disabled) { alert('This interface is not suitable for live capture. Pick another one.'); return }
+      toggleBusy = true;
+      setToggle(liveRunning, true);
+      setStatus('Starting…', '');
+      try {
+        const res = await fetch(LIVE_PROXY + '/api/live/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ interface: iface }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || data.error || 'Unable to start live monitoring');
+        toggleBusy = false;
+        await loadLiveStatus();
+        loadStats(); loadGroups(); loadAllLogs();
+      } catch (e) {
+        toggleBusy = false;
+        await loadLiveStatus();
+        alert(e.message);
+      }
+    }
+
+    function currentThreatIp() {
+      return (latestMlPrediction && (latestMlPrediction.src_ip || latestMlPrediction.source_ip)) || null;
+    }
+    function updateResponsePanel() {
+      const panel = document.getElementById('responsePanel'); if (!panel) return;
+      const ip = currentThreatIp();
+      const eligible = latestThreatScore >= RESPONSE_THRESHOLD && !!ip && !ignoredIps.has(ip) && !handledResponseIps.has(ip);
+      panel.hidden = !eligible;
+      if (!eligible) return;
+      const label = latestMlPrediction && latestMlPrediction.label ? latestMlPrediction.label : 'THREAT';
+      const model = latestMlPrediction && latestMlPrediction.model ? latestMlPrediction.model : 'Unidirectional ML';
+      document.getElementById('responseTitle').textContent = 'Threat response available';
+      document.getElementById('responseDetail').textContent = label + ' detected from ' + ip + ', score ' + latestThreatScore.toFixed(0) + '%';
+      document.getElementById('responseMeta').textContent = model + ', ' + RESPONSE_THRESHOLD + '% threshold. Manual confirmation only, nothing is blocked automatically.';
+    }
+    function showThreatModal() {
+      const modal = document.getElementById('threatModal');
+      const ip = currentThreatIp();
+      if (!modal || !ip || latestThreatScore < RESPONSE_THRESHOLD || ignoredIps.has(ip) || handledResponseIps.has(ip) || responseActionInFlight) return;
+      const label = latestMlPrediction && latestMlPrediction.label ? latestMlPrediction.label : 'THREAT';
+      const model = latestMlPrediction && latestMlPrediction.model ? latestMlPrediction.model : 'Unidirectional ML';
+      document.getElementById('threatModalScore').textContent = latestThreatScore.toFixed(0) + '%';
+      document.getElementById('threatModalMeta').innerHTML = 'Source <strong>' + escapeHtml(ip) + '</strong><br>Predicted threat <strong>' + escapeHtml(label) + '</strong><br>Model <strong>' + escapeHtml(model) + '</strong><br>Manual confirmation required before blocking.';
+      modal.hidden = false;
+    }
+    function hideThreatModal() {
+      const modal = document.getElementById('threatModal');
+      if (modal) modal.hidden = true;
+    }
+    function handleThreatScoreUpdate(score) {
+      const old = latestThreatScore;
+      latestThreatScore = Number(score || 0);
+      updateResponsePanel();
+      if (
+        latestThreatScore >= RESPONSE_THRESHOLD &&
+        old <= RESPONSE_THRESHOLD &&
+        currentThreatIp() &&
+        !ignoredIps.has(currentThreatIp()) &&
+        !handledResponseIps.has(currentThreatIp()) &&
+        !responseActionInFlight
+      ) {
+        showThreatModal();
+      }
+    }
+    async function blockCurrentThreat() {
+      const ip = currentThreatIp();
+      if (!ip || latestThreatScore < RESPONSE_THRESHOLD || handledResponseIps.has(ip) || responseActionInFlight) return;
+      const ok = window.confirm('Block source IP ' + ip + ' on this host?\n\nThreat score: ' + latestThreatScore.toFixed(0) + '%\nAction requires your confirmation.');
+      if (!ok) return;
+      responseActionInFlight = true;
+      document.getElementById('threatModalBlock').disabled = true;
+      document.getElementById('threatModalIgnore').disabled = true;
+      document.getElementById('responseBlock').disabled = true;
+      hideThreatModal();
+      try {
+        const res = await fetch(LIVE_PROXY + '/api/live/response', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'block', ip }) });
+        const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.detail || 'Firewall action failed');
+        document.getElementById('responseTitle').textContent = 'Source IP blocked';
+        document.getElementById('responseDetail').textContent = ip + ' was blocked on this host.';
+        document.getElementById('responseMeta').textContent = 'Manual response completed.';
+        handledResponseIps.add(ip);
+        document.getElementById('responsePanel').hidden = true;
+        hideThreatModal();
+      } catch (e) {
+        document.getElementById('responseBlock').disabled = false;
+        document.getElementById('threatModalBlock').disabled = false;
+        document.getElementById('threatModalIgnore').disabled = false;
+        window.alert('Response failed: ' + e.message);
+      } finally {
+        responseActionInFlight = false;
+      }
+    }
+    function ignoreCurrentThreat() {
+      const ip = currentThreatIp(); if (!ip || responseActionInFlight) return;
+      handledResponseIps.add(ip);
+      ignoredIps.add(ip);
+      hideThreatModal();
+      document.getElementById('responsePanel').hidden = true;
+      document.getElementById('responseBlock').disabled = false;
+      document.getElementById('threatModalBlock').disabled = false;
+      document.getElementById('threatModalIgnore').disabled = false;
+      lastPromptedScore = null;
+    }
+    async function stopLive() {
+      toggleBusy = true;
+      setToggle(liveRunning, true);
+      setStatus('Stopping…', '');
+      try {
+        const res = await fetch(LIVE_PROXY + '/api/live/stop', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Unable to stop live monitoring');
+        toggleBusy = false;
+        await loadLiveStatus();
+        loadStats(); loadGroups();
+      } catch (e) {
+        toggleBusy = false;
+        await loadLiveStatus();
+        alert(e.message);
+      }
+    }
+
+    document.getElementById('liveToggle').addEventListener('click', () => {
+      if (toggleBusy) return;
+      liveRunning ? stopLive() : startLive();
+    });
+    document.getElementById('statStrip').addEventListener('click', (event) => {
+      const stat = event.target.closest('.stat.threat-stat');
+      if (stat) focusThreatSource();
+    });
+    document.getElementById('statStrip').addEventListener('keydown', (event) => {
+      const stat = event.target.closest('.stat.threat-stat');
+      if (stat && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault();
+        focusThreatSource();
+      }
+    });
+    document.getElementById('responseBlock').addEventListener('click', blockCurrentThreat);
+    document.getElementById('responseIgnore').addEventListener('click', ignoreCurrentThreat);
+    document.getElementById('threatModalBlock').addEventListener('click', async () => {
+      await blockCurrentThreat();
+      if (document.getElementById('responseBlock').disabled) hideThreatModal();
+    });
+    document.getElementById('threatModalIgnore').addEventListener('click', () => { ignoreCurrentThreat(); hideThreatModal(); });
+    document.getElementById('threatModal').addEventListener('click', (event) => {
+      if (event.target.id === 'threatModal') hideThreatModal();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') hideThreatModal();
+    });
+
+    let selectedGroup = null;
+    let groups = [];
+    let topRecent = null;
+    let groupsError = null;
+
+    /* --- helpers for null-safe rendering --- */
+    function fmtConf(c) {
+      if (c == null) return '—';
+      return (c * 100).toFixed(0) + '%';
+    }
+    function sevColor(score) {
+      return score >= 90 ? 'var(--red)' : score >= 70 ? 'var(--amber)' : 'var(--muted)';
+    }
+
+    function strongestRuleThreatScore() {
+      return groups.reduce((max, group) => {
+        return Math.max(max, Number(group.threat_score || 0));
+      }, 0);
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stats');
+        const s = await res.json();
+        const total = s.flows_analyzed || 0;
+        const flagPct = total > 0 ? ((s.flagged / total) * 100).toFixed(1) : '0.0';
+
+        // The global dashboard score is the strongest currently observed
+        // threat evidence: ML confidence when available, otherwise rule-based
+        // source evidence such as DDoS/scan/beaconing. This keeps the headline
+        // score live even when the rule detector fires before packet ML.
+        const latestMlScore = Number((s.latest_ml || {}).score || 0);
+        if (latestMlScore > 0 && latestMlPrediction) {
+          rememberMlThreat(latestMlPrediction, latestMlScore);
+        }
+
+        const tr = s.top_recent || null;
+        topRecent = tr;
+        const strip = [
+          { icon: '◈', label: 'Flows analyzed', value: total.toLocaleString(), sub: s.flows_analyzed_window || 'Live flow count', cls: '' },
+          { icon: '⚑', label: 'Flagged flows', value: s.flagged || 0, sub: (s.flagged_sources || 0) + ' sources, ' + flagPct + '% of all flows', cls: 'flag' },
+          { icon: '◎', label: 'Highest threat score · last 20 flows', value: (tr ? Number(tr.score) : 0).toFixed(0) + '%', sub: tr ? (tr.label + ' · ' + tr.src_ip + ' · active ' + tr.duration) : 'No threat in the last 20 flows', cls: ((tr && Number(tr.score) >= 70) ? 'flag ' : '') + 'threat-stat' }
+        ];
+        document.getElementById('statStrip').innerHTML = strip.map(item => `
+      <div class="stat ${item.cls}" ${item.cls.includes('threat-stat') ? 'role="button" tabindex="0"' : ''}>
         <div class="stat-icon">${item.icon}</div>
         <div class="label">${escapeHtml(item.label)}</div>
         <div class="value">${escapeHtml(item.value)}</div>
         <div class="sub">${escapeHtml(item.sub)}</div>
       </div>`).join('');
-    updateResponsePanel();
-  }catch(e){console.error('[Dashboard] Failed to load stats:',e);}
-}
-
-async function loadGroups(){
-  try{
-    const res = await fetch('/api/groups');
-    const data = await res.json();
-    // Backend may return { error: "..." } on 503 instead of an array
-    if(Array.isArray(data)){
-      groups = data;
-    } else {
-      groups = [];
+        updateResponsePanel();
+      } catch (e) { console.error('[Dashboard] Failed to load stats:', e); }
     }
 
-    const flaggedGroups = groups.filter(g => Number(g.threat_score || 0) > 0);
-    rememberFlaggedSources(flaggedGroups);
-    scheduleThreatHeadline();
+    async function loadGroups() {
+      try {
+        const res = await fetch('/api/groups');
+        const data = await res.json();
+        // Backend may return { error: "..." } on 503 instead of an array
+        if (Array.isArray(data)) {
+          groups = data;
+          groupsError = null;
+        } else {
+          groups = [];
+          groupsError = (data && data.error) || 'Unexpected response from /api/groups';
+        }
 
-    renderGroups();
-  }catch(e){
-    console.error('[Dashboard] Failed to load groups:', e);
-  }
-}
+        const flaggedGroups = groups.filter(g => Number(g.threat_score || 0) > 0);
+        rememberFlaggedSources(flaggedGroups);
+        scheduleThreatHeadline();
 
-/* --- left panel: flagged sources (name or IP on the left, key data on the right) --- */
-function renderGroups(){
-  const flaggedGroups = groups.filter(g => Number(g.threat_score||0) > 0);
-  document.getElementById('sourceCount').textContent = flaggedGroups.length + (flaggedGroups.length===1?' source':' sources');
-  const list = document.getElementById('sourceList');
-  if(flaggedGroups.length === 0){
-    list.innerHTML = '<div class="empty">No flagged sources yet.<br>They will show up here as soon as threat evidence is detected.</div>';
-    return;
-  }
-  list.innerHTML = flaggedGroups.map(g => {
-    const score = Number(g.threat_score||0);
-    const name = g.host || g.src_ip || 'Unknown source';
-    const sub = g.host ? (g.src_ip || g.label) : (g.label || '');
-    return `
-    <div class="source-row ${g.group_id===selectedGroup?'active':''}" data-id="${escapeHtml(g.group_id)}">
+        renderGroups();
+      } catch (e) {
+        console.error('[Dashboard] Failed to load groups:', e);
+      }
+    }
+
+    /* --- left panel: flagged sources (name or IP on the left, key data on the right) --- */
+    function renderGroups() {
+      const flaggedGroups = groups.filter(g => Number(g.threat_score || 0) > 0);
+      document.getElementById('sourceCount').textContent = flaggedGroups.length + (flaggedGroups.length === 1 ? ' source' : ' sources');
+      const list = document.getElementById('sourceList');
+      if (flaggedGroups.length === 0) {
+        list.innerHTML = groupsError
+          ? '<div class="empty">' + escapeHtml(groupsError) + '</div>'
+          : '<div class="empty">No flagged sources yet.<br>They will show up here as soon as threat evidence is detected.</div>';
+        return;
+      }
+      list.innerHTML = flaggedGroups.map(g => {
+        const score = Number(g.threat_score || 0);
+        const name = g.host || g.src_ip || 'Unknown source';
+        const sub = g.host ? (g.src_ip || g.label) : (g.label || '');
+        return `
+    <div class="source-row ${g.group_id === selectedGroup ? 'active' : ''}" data-id="${escapeHtml(g.group_id)}">
       <span class="dot" style="background:${sevColor(score)}"></span>
       <div class="who">
         <div class="primary">${escapeHtml(name)}</div>
@@ -958,270 +1997,273 @@ function renderGroups(){
       </div>
       <div class="meta">
         <div class="score-value" style="color:${sevColor(score)}">${score.toFixed(0)}%</div>
-        <div class="flows">${escapeHtml(g.flagged_flows!=null?g.flagged_flows:'—')} of ${escapeHtml(g.request_count!=null?g.request_count:'—')} flows</div>
+        <div class="flows">${escapeHtml(g.flagged_flows != null ? g.flagged_flows : '—')} of ${escapeHtml(g.request_count != null ? g.request_count : '—')} flows</div>
       </div>
     </div>`;
-  }).join('');
-  list.querySelectorAll('.source-row').forEach(row => {
-    row.addEventListener('click', () => selectGroup(row.dataset.id));
-  });
-  if(!selectedGroup && flaggedGroups.length){
-    selectGroup(flaggedGroups[0].group_id);
-  }
-}
+      }).join('');
+      list.querySelectorAll('.source-row').forEach(row => {
+        row.addEventListener('click', () => selectGroup(row.dataset.id));
+      });
+      if (!selectedGroup && flaggedGroups.length) {
+        selectGroup(flaggedGroups[0].group_id);
+      }
+    }
 
-async function loadAllLogs(){
-  document.getElementById('logHeaderId').textContent = 'All flows';
-  try{
-    const res=await fetch('/api/logs');
-    const data=await res.json();
-    renderLogs(Array.isArray(data) ? data : [], 'No flows captured yet. Press Start to see live traffic here.');
-  }catch(e){
-    document.getElementById('logBody').innerHTML = '<div class="empty">Unable to load live flows.</div>';
-  }
-}
+    async function loadAllLogs() {
+      document.getElementById('logHeaderId').textContent = 'All flows';
+      try {
+        const res = await fetch('/api/logs');
+        const data = await res.json();
+        renderLogs(Array.isArray(data) ? data : [], 'No flows captured yet. Press Start to see live traffic here.');
+      } catch (e) {
+        document.getElementById('logBody').innerHTML = '<div class="empty">Unable to load live flows.</div>';
+      }
+    }
 
-async function selectGroup(id){
-  selectedGroup = id;
-  renderGroups();
-  document.getElementById('logHeaderId').textContent = id;
+    async function selectGroup(id) {
+      selectedGroup = id;
+      renderGroups();
+      document.getElementById('logHeaderId').textContent = id;
 
-  document.getElementById('sourceDetail').hidden = false;
-  document.getElementById('sourceDetail').innerHTML = '<div class="empty" style="padding:20px">Loading source…</div>';
-  document.getElementById('logBody').innerHTML = '<div class="empty">Loading flows…</div>';
-  try{
-    const enc = encodeURIComponent(id);
-    const [logsRes, analysisRes, historyRes] = await Promise.all([
-      fetch(`/api/groups/${enc}/logs`),
-      fetch(`/api/groups/${enc}/analysis`),
-      fetch(`/api/groups/${enc}/chat/history`)
-    ]);
-    const logs = await logsRes.json().catch(()=>[]);
-    const analysis = await analysisRes.json().catch(()=>({error:'bad analysis response'}));
-    const history = await historyRes.json().catch(()=>[]);
+      document.getElementById('sourceDetail').hidden = false;
+      document.getElementById('sourceDetail').innerHTML = '<div class="empty" style="padding:20px">Loading source…</div>';
+      document.getElementById('logBody').innerHTML = '<div class="empty">Loading flows…</div>';
+      try {
+        const enc = encodeURIComponent(id);
+        const [logsRes, analysisRes, historyRes] = await Promise.all([
+          fetch(`/api/groups/${enc}/logs`),
+          fetch(`/api/groups/${enc}/analysis`),
+          fetch(`/api/groups/${enc}/chat/history`)
+        ]);
+        const logs = await logsRes.json().catch(() => []);
+        const analysis = await analysisRes.json().catch(() => ({ error: 'bad analysis response' }));
+        const history = await historyRes.json().catch(() => []);
 
-    renderSourceDetail(id, analysis, Array.isArray(logs) ? logs : []);
-    renderLogs(Array.isArray(logs) ? logs : []);
-    resetChat(analysis, history);
-  }catch(e){
-    document.getElementById('sourceDetail').innerHTML = '<div class="empty">Failed to load source: '+escapeHtml(e.message)+'</div>';
-    document.getElementById('logBody').innerHTML = '<div class="empty">Failed to load flows.</div>';
-  }
+        renderSourceDetail(id, analysis, Array.isArray(logs) ? logs : []);
+        renderLogs(Array.isArray(logs) ? logs : []);
+        resetChat(analysis, history);
+      } catch (e) {
+        document.getElementById('sourceDetail').innerHTML = '<div class="empty">Failed to load source: ' + escapeHtml(e.message) + '</div>';
+        document.getElementById('logBody').innerHTML = '<div class="empty">Failed to load flows.</div>';
+      }
 
-  const input = document.getElementById('chatInput');
-  const send = document.getElementById('chatSend');
-  input.disabled = false;
-  send.disabled = false;
-  document.querySelectorAll('.quick-q').forEach(b => b.disabled = false);
-  input.placeholder = `Ask a follow-up about ${id}…`;
-}
+      const input = document.getElementById('chatInput');
+      const send = document.getElementById('chatSend');
+      input.disabled = false;
+      send.disabled = false;
+      document.querySelectorAll('.quick-q').forEach(b => b.disabled = false);
+      input.placeholder = `Ask a follow-up about ${id}…`;
+    }
 
-/* --- Logs tab (top): short summary of the selected source --- */
-function renderSourceDetail(id, analysis, logs){
-  const detail=document.getElementById('sourceDetail');
-  if(!analysis || analysis.error){ detail.innerHTML='<div class="empty">Unable to load source analysis.</div>'; return; }
-  const score=Number(analysis.threat_score||0);
-  const flagged=Number(analysis.flagged_flows||0);
-  const total=Number(analysis.total_flows||logs.length||0);
-  const label=analysis.label||'THREAT';
-  const ports=(analysis.top_ports||[]).slice(0,5).join(', ')||'—';
-  detail.innerHTML=`
+    /* --- Logs tab (top): short summary of the selected source --- */
+    function renderSourceDetail(id, analysis, logs) {
+      const detail = document.getElementById('sourceDetail');
+      if (!analysis || analysis.error) { detail.innerHTML = '<div class="empty">Unable to load source analysis.</div>'; return; }
+      const score = Number(analysis.threat_score || 0);
+      const flagged = Number(analysis.flagged_flows || 0);
+      const total = Number(analysis.total_flows || logs.length || 0);
+      const label = analysis.label || 'THREAT';
+      const ports = (analysis.top_ports || []).slice(0, 5).join(', ') || '—';
+      detail.innerHTML = `
     <div class="detail-title">
       <div><div class="ip">${escapeHtml(id)}</div><div class="secondary">${escapeHtml(label)}</div></div>
       <div class="verdict">${score.toFixed(0)}% threat</div>
     </div>
     <div class="detail-grid">
       <div class="detail-metric"><div class="k">Flows flagged</div><div class="v">${flagged} of ${total}</div></div>
-      <div class="detail-metric"><div class="k">Protocol</div><div class="v">${escapeHtml(analysis.protocol||'TCP')}</div></div>
+      <div class="detail-metric"><div class="k">Protocol</div><div class="v">${escapeHtml(analysis.protocol || 'TCP')}</div></div>
       <div class="detail-metric"><div class="k">Top ports</div><div class="v">${escapeHtml(ports)}</div></div>
-      <div class="detail-metric"><div class="k">Active for</div><div class="v">${escapeHtml(analysis.activity_duration||'—')}</div></div>
+      <div class="detail-metric"><div class="k">Active for</div><div class="v">${escapeHtml(analysis.activity_duration || '—')}</div></div>
       <div class="detail-metric"><div class="k">Model confidence</div><div class="v">${fmtConf(analysis.confidence)}</div></div>
     </div>`;
-}
-
-/* --- Logs tab (bottom): all logs of the selected source --- */
-function renderLogs(logs, emptyMessage='No logged flows for this source.'){
-  const body=document.getElementById('logBody');
-  if(!logs.length){ body.innerHTML=`<div class="empty">${escapeHtml(emptyMessage)}</div>`; return; }
-  body.innerHTML=`<div class="log-table-head"><span>Time</span><span>Destination</span><span>Protocol</span><span>Score</span><span>Verdict</span></div>${logs.map(l=>{
-    const flagged=l.label && l.label!=='BENIGN';
-    const score=Number(l.threat_score||0);
-    const pk=l.packets!=null?l.packets:(l.total_fwd_packets!=null?l.total_fwd_packets:null);
-    const port=l.dst_port!=null?'<em>:'+escapeHtml(l.dst_port)+'</em>':'';
-    const pkts=pk!=null?' <em>'+escapeHtml(pk)+' pkts</em>':'';
-    return `<div class="log-row"><span class="time">${escapeHtml(l.timestamp||'—')}</span><span class="dest">${escapeHtml(l.dst_ip||'—')}${port}</span><span class="proto">${escapeHtml(l.protocol||'—')}${pkts}</span><span class="flow-score ${flagged?'hot':''}">${score.toFixed(0)}%</span><span class="lbl ${flagged?'ddos':'benign'}">${escapeHtml(l.label||'BENIGN')}</span></div>`;
-  }).join('')}`;
-}
-
-// The Analysis bubble (rule-based verdict) is regenerated fresh every time —
-// it's deterministic, so there's nothing to replay there. The chat Q&A that
-// follows it, though, only exists in chat_display on the backend, so it's
-// fetched as `history` and replayed in order right after.
-function resetChat(analysis, history){
-  const log = document.getElementById('chatLog');
-  log.innerHTML = '';
-  if(analysis && !analysis.error){
-    addChatRow({ lead: analysis.lead, bullets: analysis.bullets, verdict: analysis.label }, false);
-  }
-  if(Array.isArray(history)){
-    history.forEach(turn => {
-      addChatRow({ lead: turn.lead, bullets: turn.bullets }, turn.sender === 'user');
-    });
-  }
-}
-
-function addChatRow(payload, isUser, isError){
-  const log = document.getElementById('chatLog');
-  const row = document.createElement('div');
-  row.className = 'chat-row ' + (isUser ? 'user' : 'bot') + (isError ? ' error' : '');
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  const lbl = payload.verdict || '';
-  const isThreat = lbl && lbl !== 'BENIGN';
-  const verdictHtml = lbl
-    ? `<div class="verdict ${isThreat?'ddos':'benign'}">${escapeHtml(lbl)}</div><br>`
-    : '';
-  const bulletsHtml = (payload.bullets && payload.bullets.length)
-    ? `<ul>${payload.bullets.map(b => `<li>${richText(b)}</li>`).join('')}</ul>` : '';
-  bubble.innerHTML = verdictHtml + `<div class="lead">${richText(payload.lead)}</div>` + bulletsHtml;
-  row.appendChild(bubble);
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
-  return row;
-}
-
-// Shown in place of a real reply while we're waiting on the backend —
-// the "interaction bubble": a bot-side bubble with three pulsing dots.
-function addTypingBubble(){
-  const log = document.getElementById('chatLog');
-  const row = document.createElement('div');
-  row.className = 'chat-row bot typing';
-  row.innerHTML = `<div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
-  return row;
-}
-
-async function askQuestion(q){
-  const id = selectedGroup;
-  addChatRow({ lead: q }, true);
-  const typingRow = addTypingBubble();
-  const input = document.getElementById('chatInput');
-  const send = document.getElementById('chatSend');
-  const chips = document.querySelectorAll('.quick-q');
-  input.disabled = true;
-  send.disabled = true;
-  chips.forEach(b => b.disabled = true);
-  const ctrl = new AbortController();
-  const timer = setTimeout(()=>ctrl.abort(), 60000);
-  try{
-    const res = await fetch(`/api/groups/${encodeURIComponent(id)}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: q }),
-      signal: ctrl.signal
-    });
-    let data = null;
-    try{ data = await res.json(); }catch(_){}
-    typingRow.remove();
-    if(!res.ok || !data || (!data.lead && !(data.bullets && data.bullets.length))){
-      const msg = (data && (data.error || data.detail || data.lead)) || ('backend returned HTTP '+res.status);
-      addChatRow({ lead: 'Gemini error: '+msg }, false, true);
-    } else if(id === selectedGroup){
-      addChatRow(data, false);
     }
-  }catch(e){
-    typingRow.remove();
-    addChatRow({ lead: e.name==='AbortError'
-      ? 'Gemini timed out after 60s.'
-      : "Couldn't reach the analysis backend — "+e.message }, false, true);
-  }finally{
-    clearTimeout(timer);
-    input.disabled = false;
-    send.disabled = false;
-    chips.forEach(b => b.disabled = false);
-    input.focus();
-  }
-}
 
-document.getElementById('chatForm').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const input = document.getElementById('chatInput');
-  const q = input.value.trim();
-  if(!q) return;
-  if(!selectedGroup){
-    addChatRow({ lead: 'Select a flagged source first. Chat is per-source.' }, false, true);
-    return;
-  }
-  askQuestion(q);
-  input.value = '';
-});
+    /* --- Logs tab (bottom): all logs of the selected source --- */
+    function renderLogs(logs, emptyMessage = 'No logged flows for this source.') {
+      const body = document.getElementById('logBody');
+      if (!logs.length) { body.innerHTML = `<div class="empty">${escapeHtml(emptyMessage)}</div>`; return; }
+      body.innerHTML = `<div class="log-table-head"><span>Time</span><span>Destination</span><span>Protocol</span><span>Score</span><span>Verdict</span></div>${logs.map(l => {
+        const flagged = l.label && l.label !== 'BENIGN';
+        const score = Number(l.threat_score || 0);
+        const pk = l.packets != null ? l.packets : (l.total_fwd_packets != null ? l.total_fwd_packets : null);
+        const port = l.dst_port != null ? '<em>:' + escapeHtml(l.dst_port) + '</em>' : '';
+        const pkts = pk != null ? ' <em>' + escapeHtml(pk) + ' pkts</em>' : '';
+        return `<div class="log-row"><span class="time">${escapeHtml(l.timestamp || '—')}</span><span class="dest">${escapeHtml(l.dst_ip || '—')}${port}</span><span class="proto">${escapeHtml(l.protocol || '—')}${pkts}</span><span class="flow-score ${flagged ? 'hot' : ''}">${score.toFixed(0)}%</span><span class="lbl ${flagged ? 'ddos' : 'benign'}">${escapeHtml(l.label || 'BENIGN')}</span></div>`;
+      }).join('')}`;
+    }
 
-// One-tap follow-up questions
-document.getElementById('quickQs').addEventListener('click', (e) => {
-  const chip = e.target.closest('.quick-q');
-  if(!chip || chip.disabled) return;
-  if(!selectedGroup){
-    addChatRow({ lead: 'Select a flagged source first. Chat is per-source.' }, false, true);
-    return;
-  }
-  askQuestion(chip.dataset.q);
-});
-
-/* --- mobile nav: hamburger + glass dropdown --- */
-(function(){
-  const btn=document.getElementById('navToggle');
-  const menu=document.getElementById('navMenu');
-  const mobile=window.matchMedia('(max-width:1000px)');
-  function setOpen(open){
-    btn.classList.toggle('open',open);
-    menu.classList.toggle('open',open);
-    btn.setAttribute('aria-expanded',String(open));
-    btn.setAttribute('aria-label',open?'Close menu':'Open menu');
-  }
-  btn.addEventListener('click',e=>{ e.stopPropagation(); setOpen(!menu.classList.contains('open')); });
-  document.addEventListener('click',e=>{
-    if(menu.classList.contains('open') && !menu.contains(e.target) && !btn.contains(e.target)) setOpen(false);
-  });
-  document.addEventListener('keydown',e=>{
-    if(e.key==='Escape' && menu.classList.contains('open')){ setOpen(false); btn.focus(); }
-  });
-  mobile.addEventListener('change',()=>setOpen(false));
-})();
-
-/* --- initial load --- */
-loadLiveStatus();
-loadGeminiStatus();
-setInterval(loadGeminiStatus, 30000);
-startLiveStatusPolling();
-loadStats();
-loadGroups();
-loadAllLogs();
-
-/* --- auto-refresh polling: update stats + groups every 5 seconds,
-       and refresh the selected source's logs silently (without
-       touching chat history or disrupting user interaction). --- */
-setInterval(async () => {
-  await loadStats();
-  await loadGroups();
-  // Keep the Logs panel useful even before a source is selected.
-  if(!selectedGroup){
-    await loadAllLogs();
-  }
-  // If a source is selected, silently refresh its log list
-  if(selectedGroup){
-    try{
-      const logsRes = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/logs`);
-      if(logsRes.ok){
-        const logs = await logsRes.json();
-        renderLogs(Array.isArray(logs) ? logs : [], 'No flows captured yet. Press Start to see live traffic here.');
+    // The Analysis bubble (rule-based verdict) is regenerated fresh every time —
+    // it's deterministic, so there's nothing to replay there. The chat Q&A that
+    // follows it, though, only exists in chat_display on the backend, so it's
+    // fetched as `history` and replayed in order right after.
+    function resetChat(analysis, history) {
+      const log = document.getElementById('chatLog');
+      log.innerHTML = '';
+      if (analysis && !analysis.error) {
+        addChatRow({ lead: analysis.lead, bullets: analysis.bullets, verdict: analysis.label }, false);
       }
-    }catch(e){
-      // Silently ignore polling errors for selected-source log refresh
+      if (Array.isArray(history)) {
+        history.forEach(turn => {
+          addChatRow({ lead: turn.lead, bullets: turn.bullets }, turn.sender === 'user');
+        });
+      }
     }
-  }
-}, 5000);
-</script>
+
+    function addChatRow(payload, isUser, isError) {
+      const log = document.getElementById('chatLog');
+      const row = document.createElement('div');
+      row.className = 'chat-row ' + (isUser ? 'user' : 'bot') + (isError ? ' error' : '');
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      const lbl = payload.verdict || '';
+      const isThreat = lbl && lbl !== 'BENIGN';
+      const verdictHtml = lbl
+        ? `<div class="verdict ${isThreat ? 'ddos' : 'benign'}">${escapeHtml(lbl)}</div><br>`
+        : '';
+      const bulletsHtml = (payload.bullets && payload.bullets.length)
+        ? `<ul>${payload.bullets.map(b => `<li>${richText(b)}</li>`).join('')}</ul>` : '';
+      bubble.innerHTML = verdictHtml + `<div class="lead">${richText(payload.lead)}</div>` + bulletsHtml;
+      row.appendChild(bubble);
+      log.appendChild(row);
+      log.scrollTop = log.scrollHeight;
+      return row;
+    }
+
+    // Shown in place of a real reply while we're waiting on the backend —
+    // the "interaction bubble": a bot-side bubble with three pulsing dots.
+    function addTypingBubble() {
+      const log = document.getElementById('chatLog');
+      const row = document.createElement('div');
+      row.className = 'chat-row bot typing';
+      row.innerHTML = `<div class="bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+      log.appendChild(row);
+      log.scrollTop = log.scrollHeight;
+      return row;
+    }
+
+    async function askQuestion(q) {
+      const id = selectedGroup;
+      addChatRow({ lead: q }, true);
+      const typingRow = addTypingBubble();
+      const input = document.getElementById('chatInput');
+      const send = document.getElementById('chatSend');
+      const chips = document.querySelectorAll('.quick-q');
+      input.disabled = true;
+      send.disabled = true;
+      chips.forEach(b => b.disabled = true);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 60000);
+      try {
+        const res = await fetch(`/api/groups/${encodeURIComponent(id)}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: q }),
+          signal: ctrl.signal
+        });
+        let data = null;
+        try { data = await res.json(); } catch (_) { }
+        typingRow.remove();
+        if (!res.ok || !data || (!data.lead && !(data.bullets && data.bullets.length))) {
+          const msg = (data && (data.error || data.detail || data.lead)) || ('backend returned HTTP ' + res.status);
+          addChatRow({ lead: 'Gemini error: ' + msg }, false, true);
+        } else if (id === selectedGroup) {
+          addChatRow(data, false);
+        }
+      } catch (e) {
+        typingRow.remove();
+        addChatRow({
+          lead: e.name === 'AbortError'
+            ? 'Gemini timed out after 60s.'
+            : "Couldn't reach the analysis backend — " + e.message
+        }, false, true);
+      } finally {
+        clearTimeout(timer);
+        input.disabled = false;
+        send.disabled = false;
+        chips.forEach(b => b.disabled = false);
+        input.focus();
+      }
+    }
+
+    document.getElementById('chatForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('chatInput');
+      const q = input.value.trim();
+      if (!q) return;
+      if (!selectedGroup) {
+        addChatRow({ lead: 'Select a flagged source first. Chat is per-source.' }, false, true);
+        return;
+      }
+      askQuestion(q);
+      input.value = '';
+    });
+
+    // One-tap follow-up questions
+    document.getElementById('quickQs').addEventListener('click', (e) => {
+      const chip = e.target.closest('.quick-q');
+      if (!chip || chip.disabled) return;
+      if (!selectedGroup) {
+        addChatRow({ lead: 'Select a flagged source first. Chat is per-source.' }, false, true);
+        return;
+      }
+      askQuestion(chip.dataset.q);
+    });
+
+    /* --- mobile nav: hamburger + glass dropdown --- */
+    (function () {
+      const btn = document.getElementById('navToggle');
+      const menu = document.getElementById('navMenu');
+      const mobile = window.matchMedia('(max-width:1000px)');
+      function setOpen(open) {
+        btn.classList.toggle('open', open);
+        menu.classList.toggle('open', open);
+        btn.setAttribute('aria-expanded', String(open));
+        btn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+      }
+      btn.addEventListener('click', e => { e.stopPropagation(); setOpen(!menu.classList.contains('open')); });
+      document.addEventListener('click', e => {
+        if (menu.classList.contains('open') && !menu.contains(e.target) && !btn.contains(e.target)) setOpen(false);
+      });
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && menu.classList.contains('open')) { setOpen(false); btn.focus(); }
+      });
+      mobile.addEventListener('change', () => setOpen(false));
+    })();
+
+    /* --- initial load --- */
+    loadLiveStatus();
+    loadGeminiStatus();
+    setInterval(loadGeminiStatus, 30000);
+    startLiveStatusPolling();
+    loadStats();
+    loadGroups();
+    loadAllLogs();
+
+    /* --- auto-refresh polling: update stats + groups every 5 seconds,
+           and refresh the selected source's logs silently (without
+           touching chat history or disrupting user interaction). --- */
+    setInterval(async () => {
+      await loadStats();
+      await loadGroups();
+      // Keep the Logs panel useful even before a source is selected.
+      if (!selectedGroup) {
+        await loadAllLogs();
+      }
+      // If a source is selected, silently refresh its log list
+      if (selectedGroup) {
+        try {
+          const logsRes = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/logs`);
+          if (logsRes.ok) {
+            const logs = await logsRes.json();
+            renderLogs(Array.isArray(logs) ? logs : [], 'No flows captured yet. Press Start to see live traffic here.');
+          }
+        } catch (e) {
+          // Silently ignore polling errors for selected-source log refresh
+        }
+      }
+    }, 5000);
+  </script>
 
 </body>
+
 </html>
