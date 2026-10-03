@@ -1,11 +1,11 @@
 import json
 import os
-import random
 import sqlite3
 import threading
 import time
 import hashlib
 import traceback
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, Response
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError, ServerError
@@ -73,39 +73,16 @@ def _env_diag_text():
 app = Flask(__name__)
 
 # =============================================================================
-# DATA MODE
+# LIVE SENSOR API
 #
-#   DEMO_MODE=auto    (default) fake demo flows while the live sensor is
-#                     stopped; real Zeek flows as soon as you press START LIVE.
-#   DEMO_MODE=always  always serve demo flows (offline Gemini testing).
-#   DEMO_MODE=off     never serve demo flows (real Zeek data only).
-#
-# "Live running" is read from the FastAPI sensor at BACKEND_HOST:BACKEND_PORT
-# (/api/live/status), the same API the frontend START/STOP buttons call.
+# The FastAPI sensor runs at BACKEND_HOST:BACKEND_PORT. The browser talks to it
+# through the /live-api/* proxy below (same origin, so no CORS setup needed).
+# Only the WebSocket goes straight to the sensor.
 # =============================================================================
 
-DEMO_MODE = os.environ.get("DEMO_MODE", "auto").strip().lower()
 _BACKEND_HOST = os.environ.get("BACKEND_HOST", "127.0.0.1")
 _BACKEND_PORT = os.environ.get("BACKEND_PORT", "8000")
 LIVE_API_URL = f"http://{_BACKEND_HOST}:{_BACKEND_PORT}"
-
-_live_cache = {"t": 0.0, "running": False}
-
-
-def _live_running():
-    """True if the FastAPI live sensor reports running. Cached for 2s."""
-    now = time.time()
-    if now - _live_cache["t"] < 2.0:
-        return _live_cache["running"]
-    running = False
-    try:
-        with urllib.request.urlopen(LIVE_API_URL + "/api/live/status", timeout=0.8) as r:
-            running = bool(json.loads(r.read().decode("utf-8")).get("running"))
-    except Exception:
-        running = False
-    _live_cache["t"] = now
-    _live_cache["running"] = running
-    return running
 
 
 # =============================================================================
@@ -401,169 +378,6 @@ def _make_features(duration, orig_bytes, resp_bytes, total_pkts, packet_rate):
 
 
 # =============================================================================
-# DEMO DATA PROVIDER — fake but realistic flows for testing the dashboard and
-# Gemini chat without Zeek. Same dict shape as the real provider.
-#
-# Sources (all addresses are reserved documentation / private ranges):
-#   203.0.113.50-52  DDOS         flood against 10.0.0.10:443
-#   203.0.113.77     PORT_SCAN    sweep of 10.0.0.15
-#   198.51.100.23    BEACONING    ~30s heartbeat to 185.199.110.9:8443
-#   192.168.1.44     EXFILTRATION ~50 MB bursts to 45.33.32.156:443
-#   192.168.1.61     DGA          random-looking domain lookups
-#   192.168.1.20/35  benign browsing
-# =============================================================================
-
-class DemoDataProvider:
-    DEMO_LABEL = "DEMO DATA · sample flows (press START LIVE for real traffic)"
-
-    def __init__(self):
-        self._flows = None
-        self._threats = []
-        self._lock = threading.Lock()
-
-    def _build(self):
-        rng = random.Random(1337)
-        now = time.time()
-        flows = []
-        threats = []
-        hostmap = {
-            "10.0.0.10": "shop.example.com",
-            "10.0.0.15": "db-internal.local",
-            "185.199.110.9": "cdn-update.example.net",
-            "45.33.32.156": "files.example-share.io",
-            "8.8.8.8": "dns.google",
-            "142.250.77.14": "www.google.com",
-            "151.101.1.69": "assets.example.org",
-            "140.82.112.3": "github.com",
-            "52.96.108.2": "outlook.office365.com",
-        }
-
-        def add(src, dst, port, proto, ts, dur, opk, rpk, ob, rb, label="BENIGN",
-                severity=None, why=None):
-            total = opk + rpk
-            rate = (total / dur) if dur > 0 else float(total)
-            score = _score_from_severity(label, severity)
-            raw_id = f"demo:{src}:{dst}:{port}:{ts:.3f}"
-            flows.append({
-                "id": "demo_" + hashlib.md5(raw_id.encode()).hexdigest()[:8],
-                "src_ip": src,
-                "host": hostmap.get(dst),
-                "timestamp": _format_timestamp(ts),
-                "timestamp_epoch": ts,
-                "dst_ip": dst,
-                "dst_port": port,
-                "protocol": proto,
-                "confidence": (score / 100.0) if label != "BENIGN" else None,
-                "threat_score": score,
-                "label": label,
-                "packets_per_sec": round(rate, 1),
-                "packets": int(total),
-                "why": list(why or []),
-                "features": _make_features(dur, ob, rb, total, rate),
-            })
-
-        # --- DDoS: three attacker sources hammering one destination ---------
-        for n, src in enumerate(["203.0.113.50", "203.0.113.51", "203.0.113.52"]):
-            for i in range(14):
-                add(src, "10.0.0.10", 443, "TCP",
-                    now - 240 + i * 0.6 + n * 0.2,
-                    rng.uniform(0.005, 0.05), rng.randint(1, 3), 0,
-                    rng.randint(40, 70), 0,
-                    "DDOS", "high",
-                    ["Destination received 4820 connections from 37 unique sources"])
-        threats.append({"type": "possible_ddos", "dst_ip": "10.0.0.10",
-                        "connection_count": 4820, "unique_sources": 37, "severity": "high"})
-
-        # --- Port scan -------------------------------------------------------
-        scan_ports = [21, 22, 23, 25, 53, 80, 110, 139, 143, 443, 445, 3306, 3389, 5432, 8080]
-        for i, port in enumerate(scan_ports * 2):
-            add("203.0.113.77", "10.0.0.15", port, "TCP",
-                now - 200 + i * 0.4, rng.uniform(0.001, 0.02), 1, rng.choice([0, 1]),
-                rng.randint(0, 60), 0,
-                "PORT_SCAN", "medium",
-                [f"Source contacted {len(scan_ports)} unique ports on 10.0.0.15",
-                 f"{len(scan_ports) * 2} connections in this src→dst pair"])
-        threats.append({"type": "possible_port_scan", "src_ip": "203.0.113.77",
-                        "dst_ip": "10.0.0.15", "unique_destination_ports": len(scan_ports),
-                        "connection_count": len(scan_ports) * 2, "severity": "medium"})
-
-        # --- Beaconing -------------------------------------------------------
-        for i in range(14):
-            add("198.51.100.23", "185.199.110.9", 8443, "TCP",
-                now - 420 + i * 30 + rng.uniform(-0.8, 0.8),
-                rng.uniform(0.1, 0.4), 4, 3, rng.randint(180, 260), rng.randint(90, 140),
-                "BEACONING", "medium",
-                ["14 repeated connections from this source to 185.199.110.9",
-                 "Average interval between connections: 30.04s"])
-        threats.append({"type": "possible_beaconing", "src_ip": "198.51.100.23",
-                        "dst_ip": "185.199.110.9", "connection_count": 14,
-                        "average_interval": 30.04, "severity": "medium"})
-
-        # --- Exfiltration ----------------------------------------------------
-        for i in range(5):
-            ob = rng.randint(45_000_000, 55_000_000)
-            add("192.168.1.44", "45.33.32.156", 443, "TCP",
-                now - 360 + i * 55, rng.uniform(38, 52), 36000, 2400,
-                ob, rng.randint(40_000, 90_000),
-                "EXFILTRATION", "high",
-                [f"Large outbound transfer: {ob} bytes sent",
-                 "Outbound ratio: 0.99"])
-        threats.append({"type": "possible_exfiltration", "src_ip": "192.168.1.44",
-                        "dst_ip": "45.33.32.156", "outbound_bytes": 250_000_000,
-                        "outbound_ratio": 0.99, "severity": "high"})
-
-        # --- DGA-looking DNS -------------------------------------------------
-        for i, domain in enumerate(["xk3jq9vz1w.top", "qp7zr2mdl0c.xyz", "vb8wn4tys6h.top"]):
-            add("192.168.1.61", "8.8.8.8", 53, "UDP",
-                now - 150 + i * 20, 0.04, 1, 1, 70, 120,
-                "DGA", "medium",
-                [f"Suspicious domain queried: {domain}"])
-        threats.append({"type": "possible_dga", "src_ip": "192.168.1.61",
-                        "dst_ip": "8.8.8.8", "domain": "xk3jq9vz1w.top", "severity": "medium"})
-
-        # --- Benign browsing -------------------------------------------------
-        benign_plan = [
-            ("192.168.1.20", ["142.250.77.14", "151.101.1.69"], 443),
-            ("192.168.1.35", ["140.82.112.3", "52.96.108.2"], 443),
-        ]
-        for src, dsts, port in benign_plan:
-            for i in range(10):
-                pk = rng.randint(8, 120)
-                add(src, rng.choice(dsts), port, "TCP",
-                    now - 500 + i * 45 + rng.uniform(0, 20),
-                    rng.uniform(0.2, 6.0), pk, pk + rng.randint(0, 30),
-                    rng.randint(500, 9000), rng.randint(2000, 90000))
-
-        self._flows = flows
-        self._threats = threats
-
-    def _ensure(self):
-        with self._lock:
-            if self._flows is None:
-                self._build()
-
-    def get_flows(self):
-        self._ensure()
-        return self._flows
-
-    def get_threats(self):
-        self._ensure()
-        return self._threats
-
-    def get_error(self):
-        return None
-
-    def get_conn_log_path(self):
-        return self.DEMO_LABEL
-
-    def get_zeek_dir(self):
-        return None
-
-
-_demo_provider = DemoDataProvider()
-
-
-# =============================================================================
 # REAL DATA PROVIDER — Zeek logs -> features -> rule detectors -> dashboard
 # format. Detection logic stays in src/ and backend/ and is NOT duplicated.
 # =============================================================================
@@ -573,7 +387,7 @@ try:
     from src.features.flow_features import create_flow_features
     from backend.services import run_rule_detectors
     _PIPELINE_ERROR = None
-except Exception as _imp_err:  # demo mode still works without the pipeline
+except Exception as _imp_err:
     read_zeek_log = create_flow_features = run_rule_detectors = None
     _PIPELINE_ERROR = f"Detection pipeline import failed: {type(_imp_err).__name__}: {_imp_err}"
     print(f"[Dashboard] {_PIPELINE_ERROR}")
@@ -661,7 +475,7 @@ class RealDataProvider:
         zeek_dir = _find_zeek_log_dir()
         if zeek_dir is None:
             if not self._flows:
-                self._last_error = "Waiting for Zeek logs — no conn.log found yet."
+                self._last_error = "Waiting for Zeek logs — no conn.log found yet. Press Start."
             return False
 
         conn_log = zeek_dir / "conn.log"
@@ -719,7 +533,7 @@ class RealDataProvider:
 
         zeek_dir = _find_zeek_log_dir()
         if zeek_dir is None:
-            self._last_error = "Waiting for Zeek logs — no conn.log found yet."
+            self._last_error = "Waiting for Zeek logs — no conn.log found yet. Press Start."
             self._last_refresh = time.time()
             return
 
@@ -863,16 +677,8 @@ _data_provider = RealDataProvider()
 
 
 def _src():
-    """Pick the active provider: demo flows until START LIVE, then real."""
-    if DEMO_MODE == "always":
-        return _demo_provider
-    if DEMO_MODE == "off":
-        return _data_provider
-    return _data_provider if _live_running() else _demo_provider
-
-
-def _mode_name(provider):
-    return "demo" if provider is _demo_provider else "live"
+    """Live data only."""
+    return _data_provider
 
 
 # =============================================================================
@@ -1226,6 +1032,34 @@ def home():
     return render_template("index.html", live_api=LIVE_API_URL)
 
 
+@app.route("/live-api/<path:path>", methods=["GET", "POST"])
+def live_api_proxy(path):
+    """Same-origin proxy to the FastAPI sensor — the Start/Stop buttons go
+    through here so the browser never needs CORS to reach port 8000."""
+    if not path.startswith("api/live/"):
+        return jsonify({"detail": "Not allowed."}), 404
+    data = request.get_data() if request.method == "POST" else None
+    req = urllib.request.Request(
+        f"{LIVE_API_URL}/{path}",
+        data=data,
+        method=request.method,
+        headers={"Content-Type": request.headers.get("Content-Type", "application/json")},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return Response(
+                r.read(), status=r.status,
+                content_type=r.headers.get("Content-Type", "application/json"),
+            )
+    except urllib.error.HTTPError as e:
+        return Response(
+            e.read(), status=e.code,
+            content_type=e.headers.get("Content-Type", "application/json"),
+        )
+    except Exception as e:
+        return jsonify({"detail": f"Sensor API unreachable at {LIVE_API_URL}: {e}"}), 502
+
+
 @app.route("/api/gemini/status")
 def api_gemini_status():
     return jsonify({
@@ -1237,7 +1071,6 @@ def api_gemini_status():
 @app.route("/api/stats")
 def api_stats():
     provider = _src()
-    mode = _mode_name(provider)
     error = provider.get_error()
     if error:
         return jsonify({
@@ -1247,7 +1080,7 @@ def api_stats():
             "flagged_sources": 0,
             "avg_confidence": 0.0,
             "model": "Rule-Based Engine",
-            "mode": mode,
+            "mode": "live",
             "error": error,
         })
 
@@ -1276,7 +1109,7 @@ def api_stats():
         "avg_confidence": round(avg_conf, 4),
         "max_threat_score": round(max_threat_score, 2),
         "model": "Rule-Based Engine",
-        "mode": mode,
+        "mode": "live",
     })
 
 
@@ -1348,18 +1181,15 @@ def api_group_chat(group_id):
 
 
 if __name__ == "__main__":
-    print(f"[Dashboard] DEMO_MODE={DEMO_MODE} · live API {LIVE_API_URL} · Gemini model {GEMINI_MODEL}")
+    print(f"[Dashboard] Live API {LIVE_API_URL} · Gemini model {GEMINI_MODEL}")
     print(f"[Dashboard] Gemini key: {'loaded' if _gemini_key() else 'MISSING'} · {_env_diag_text()}")
-    if DEMO_MODE != "always":
-        print("[Dashboard] Starting initial data load...")
-        _data_provider.refresh()
-        error = _data_provider.get_error()
-        if error:
-            print(f"[Dashboard] NOTE: {error}")
-            if DEMO_MODE == "auto":
-                print("[Dashboard] Demo flows will be shown until live capture produces Zeek logs.")
-        else:
-            print(f"[Dashboard] Real data ready — {len(_data_provider.get_flows())} flows")
+    print("[Dashboard] Starting initial data load...")
+    _data_provider.refresh()
+    error = _data_provider.get_error()
+    if error:
+        print(f"[Dashboard] NOTE: {error}")
+    else:
+        print(f"[Dashboard] Real data ready — {len(_data_provider.get_flows())} flows")
 
     app.run(
         host=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),

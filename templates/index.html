@@ -273,12 +273,12 @@ header{height:64px;background:var(--bg);border-bottom:1px solid var(--line);disp
 <header>
   <div class="brand">
     <svg viewBox="0 0 48 48" fill="none"><path d="M24 3L6 11V23C6 34 14 43 24 46C34 43 42 34 42 23V11L24 3Z" stroke="currentColor" stroke-width="2.4"/><path d="M16 24L21 29L33 17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div class="brand-text"><h1>Shakalaka</h1><span class="model-badge" id="modelBadge">Unidirectional ML, 7 models</span></div>
+    <div class="brand-text"><h1>Shakalaka</h1><span class="model-badge" id="modelBadge">Connecting…</span></div>
   </div>
   <div class="live-controls" id="navMenu">
     <select id="interfaceSelect" class="live-select sensor-control" aria-label="Network interface"><option value="">Interface…</option></select>
     <button id="liveToggle" class="live-btn toggle sensor-control" type="button" disabled>▶ Start</button>
-    
+    <span class="live-status sensor-control" id="liveStatus">Connecting…</span>
   </div>
   <div class="live-clock" id="liveClock" aria-label="Live date and time">
     <div class="time" id="liveClockTime">--:--:--</div>
@@ -323,7 +323,7 @@ header{height:64px;background:var(--bg);border-bottom:1px solid var(--line);disp
 
       <div class="tab-pane" id="paneLogs" role="tabpanel" aria-labelledby="tabLogs">
         <div class="source-detail" id="sourceDetail" hidden></div>
-        <div id="logBody"><div class="empty">No logged flows yet. Start live monitoring.</div></div>
+        <div id="logBody"><div class="empty">No logged flows yet. Press Start to begin live monitoring.</div></div>
       </div>
 
       <div class="tab-pane" id="paneAnalysis" role="tabpanel" aria-labelledby="tabAnalysis" hidden>
@@ -359,10 +359,12 @@ header{height:64px;background:var(--bg);border-bottom:1px solid var(--line);disp
    POST /api/groups/<id>/chat          body: { message }
                                         -> { lead, bullets? }
 
-   Data now comes from the real Zeek + rule-based detection pipeline.
+   Sensor control (Start / Stop / status / response) goes through the Flask
+   proxy at /live-api/api/live/*  ->  FastAPI sensor. Live data only.
    ============================================================ */
 
-const LIVE_API = {{ live_api|tojson }};
+const LIVE_API = {{ live_api|tojson }};   // direct sensor URL, used only for the WebSocket
+const LIVE_PROXY = '/live-api';           // same-origin proxy for every REST call
 let liveSocket = null;
 let liveThreats = 0;
 let liveModelLabel = 'Offline';
@@ -415,6 +417,7 @@ let toggleBusy = false;
 function setToggle(running, apiOk = true){
   liveRunning = running;
   const btn = document.getElementById('liveToggle');
+  if(!btn) return;
   btn.textContent = running ? '■ Stop' : '▶ Start';
   btn.classList.toggle('running', running);
   btn.disabled = !apiOk || toggleBusy;
@@ -422,6 +425,7 @@ function setToggle(running, apiOk = true){
 }
 function setStatus(text, state){
   const st = document.getElementById('liveStatus');
+  if(!st) return;
   st.textContent = text;
   st.classList.toggle('on', state === 'on');
   st.classList.toggle('offline', state === 'error');
@@ -540,28 +544,60 @@ function updateLiveClock(){
 updateLiveClock();
 setInterval(updateLiveClock, 1000);
 
+/* --- interface dropdown: rebuilt only when the list actually changes,
+       so it never collapses under the user's cursor --- */
+let interfaceSignature = '';
+function populateInterfaces(status){
+  const details=(status&&status.interface_details)||[];
+  const sig=details.map(i=>i.name+':'+(i.usable?1:0)).join('|');
+  if(sig===interfaceSignature) return;
+  interfaceSignature=sig;
+  const select=document.getElementById('interfaceSelect');
+  const current=select.value;
+  [...select.options].slice(1).forEach(o => o.remove());
+  details.forEach(i=>{
+    const o=document.createElement('option');
+    o.value=i.name;
+    const state=i.usable ? 'ready' : (i.reason || 'unavailable');
+    o.textContent=(i.display_name||i.name)+' ('+i.kind+', '+state+')';
+    o.disabled=!i.usable;
+    select.appendChild(o);
+  });
+  if(current && details.some(i=>i.name===current && i.usable)) select.value=current;
+  else {
+    const ready=details.find(i=>i.usable);
+    if(ready) select.value=ready.name;
+  }
+}
+
 async function loadLiveStatus(){
   try{
-    const res=await fetch(LIVE_API+'/api/live/status',{cache:'no-store'});
-    if(!res.ok) throw new Error('Live status request failed');
+    const res=await fetch(LIVE_PROXY+'/api/live/status',{cache:'no-store'});
+    if(!res.ok) throw new Error('Live status request failed ('+res.status+')');
     const s=await res.json();
     const running=!!s.running;
 
-    // The dashboard remains open independently of the sensor. The status
-    // reflects the actual FastAPI live-monitor state, not whether the page
-    // itself is reachable.
     document.querySelectorAll('.sensor-control').forEach(el=>el.hidden=false);
     setStatus(running?'Live':'Offline', running?'on':'');
     setToggle(running, true);
-    document.getElementById('interfaceSelect').disabled=running;
+    const select=document.getElementById('interfaceSelect');
+    select.disabled=running;
 
-    if(s.interface) document.getElementById('interfaceSelect').value=s.interface;
+    populateInterfaces(s);
+    if(running && s.interface) select.value=s.interface;
+
     const loaded=(s.models&&s.models.loaded_models)||[];
-    const latest=(s.latest_ml)||{};
-    latestThreatScore=Number(latest.score||0);
-    latestMlPrediction=latest.prediction||null;
-    if(latest.source_ip && latestMlPrediction) latestMlPrediction.src_ip=latest.source_ip;
-    updateResponsePanel();
+    // Only take the sensor's score when it actually reports one — otherwise the
+    // 2s poll would wipe the headline threat score back to 0.
+    const latest=s.latest_ml;
+    if(latest && latest.score!=null){
+      latestThreatScore=Number(latest.score||0);
+      if(latest.prediction){
+        latestMlPrediction=latest.prediction;
+        if(latest.source_ip) latestMlPrediction.src_ip=latest.source_ip;
+      }
+      updateResponsePanel();
+    }
     liveModelLabel = loaded.length
       ? 'Unidirectional ML, '+loaded.length+' model'+(loaded.length===1?'':'s')
       : 'Rules only, ML ready';
@@ -574,12 +610,13 @@ async function loadLiveStatus(){
     }
     return s;
   }catch(e){
-    // Flask dashboard can remain open even if FastAPI/app.py has stopped.
-    // The toggle stays visible but disabled so it's obvious the sensor API
-    // (LIVE_API) is unreachable. It enables automatically when it recovers.
+    // Flask dashboard stays open even if the FastAPI sensor is down.
+    // The toggle stays visible but disabled; it re-enables automatically
+    // as soon as the sensor API answers again.
     document.querySelectorAll('.sensor-control').forEach(el=>el.hidden=false);
     setStatus('Sensor API offline','error');
     setToggle(false, false);
+    document.getElementById('modelBadge').textContent='Sensor API offline';
     if(liveSocket){
       try{ liveSocket.close(); }catch(err){}
       liveSocket=null;
@@ -594,29 +631,6 @@ function startLiveStatusPolling(){
   // Keep Live/Offline/API offline synchronized even when the user does
   // not interact with the Start/Stop button.
   liveStatusPollTimer = setInterval(loadLiveStatus, 2000);
-}
-
-async function loadInterfaces(){
-  try{
-    const s=await (await fetch(LIVE_API+'/api/live/status')).json();
-    const select=document.getElementById('interfaceSelect');
-    const current=select.value;
-    const details=(s.interface_details||[]);
-    [...select.options].slice(1).forEach(o => o.remove());
-    details.forEach(i=>{
-      const o=document.createElement('option');
-      o.value=i.name;
-      const state=i.usable ? 'ready' : (i.reason || 'unavailable');
-      o.textContent=(i.display_name||i.name)+' ('+i.kind+', '+state+')';
-      o.disabled=!i.usable;
-      select.appendChild(o);
-    });
-    if(current && details.some(i=>i.name===current && i.usable)) select.value=current;
-    else {
-      const ready=details.find(i=>i.usable);
-      if(ready) select.value=ready.name;
-    }
-  }catch(e){}
 }
 
 function connectLiveSocket(){
@@ -680,19 +694,20 @@ async function startLive(){
   const iface=select.value;
   if(!iface){alert('Select a usable network interface first.');return}
   const option=select.options[select.selectedIndex];
-  if(option && option.disabled){alert('This interface is not suitable for live capture. Refresh the interface list.');return}
+  if(option && option.disabled){alert('This interface is not suitable for live capture. Pick another one.');return}
   toggleBusy=true;
   setToggle(liveRunning, true);
+  setStatus('Starting…','');
   try{
-    const res=await fetch(LIVE_API+'/api/live/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interface:iface})});
-    const data=await res.json();
-    if(!res.ok) throw new Error(data.detail||'Unable to start live monitoring');
+    const res=await fetch(LIVE_PROXY+'/api/live/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interface:iface})});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.detail||data.error||'Unable to start live monitoring');
     toggleBusy=false;
     await loadLiveStatus();
-    loadStats(); loadGroups();
+    loadStats(); loadGroups(); loadAllLogs();
   }catch(e){
     toggleBusy=false;
-    setToggle(liveRunning, true);
+    await loadLiveStatus();
     alert(e.message);
   }
 }
@@ -752,8 +767,8 @@ async function blockCurrentThreat(){
   document.getElementById('responseBlock').disabled=true;
   hideThreatModal();
   try{
-    const res=await fetch(LIVE_API+'/api/live/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'block',ip})});
-    const data=await res.json(); if(!res.ok) throw new Error(data.detail||'Firewall action failed');
+    const res=await fetch(LIVE_PROXY+'/api/live/response',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'block',ip})});
+    const data=await res.json().catch(()=>({})); if(!res.ok) throw new Error(data.detail||'Firewall action failed');
     document.getElementById('responseTitle').textContent='Source IP blocked';
     document.getElementById('responseDetail').textContent=ip+' was blocked on this host.';
     document.getElementById('responseMeta').textContent='Manual response completed.';
@@ -783,16 +798,17 @@ function ignoreCurrentThreat(){
 async function stopLive(){
   toggleBusy=true;
   setToggle(liveRunning, true);
+  setStatus('Stopping…','');
   try{
-    const res=await fetch(LIVE_API+'/api/live/stop',{method:'POST'});
-    const data=await res.json();
+    const res=await fetch(LIVE_PROXY+'/api/live/stop',{method:'POST'});
+    const data=await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.detail||'Unable to stop live monitoring');
     toggleBusy=false;
     await loadLiveStatus();
     loadStats(); loadGroups();
   }catch(e){
     toggleBusy=false;
-    setToggle(liveRunning, true);
+    await loadLiveStatus();
     alert(e.message);
   }
 }
@@ -956,11 +972,10 @@ function renderGroups(){
 
 async function loadAllLogs(){
   document.getElementById('logHeaderId').textContent = 'All flows';
-  document.getElementById('logBody').innerHTML = '<div class="empty">Loading live flows…</div>';
   try{
     const res=await fetch('/api/logs');
     const data=await res.json();
-    renderLogs(Array.isArray(data) ? data : [], 'No flows captured yet. Start live monitoring to see traffic here.');
+    renderLogs(Array.isArray(data) ? data : [], 'No flows captured yet. Press Start to see live traffic here.');
   }catch(e){
     document.getElementById('logBody').innerHTML = '<div class="empty">Unable to load live flows.</div>';
   }
@@ -1175,7 +1190,6 @@ document.getElementById('quickQs').addEventListener('click', (e) => {
 })();
 
 /* --- initial load --- */
-loadInterfaces();
 loadLiveStatus();
 loadGeminiStatus();
 setInterval(loadGeminiStatus, 30000);
@@ -1200,7 +1214,7 @@ setInterval(async () => {
       const logsRes = await fetch(`/api/groups/${encodeURIComponent(selectedGroup)}/logs`);
       if(logsRes.ok){
         const logs = await logsRes.json();
-        renderLogs(Array.isArray(logs) ? logs : [], 'No flows captured yet. Start live monitoring to see traffic here.');
+        renderLogs(Array.isArray(logs) ? logs : [], 'No flows captured yet. Press Start to see live traffic here.');
       }
     }catch(e){
       // Silently ignore polling errors for selected-source log refresh
