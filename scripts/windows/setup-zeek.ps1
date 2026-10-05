@@ -1,5 +1,6 @@
 # Windows Zeek bootstrap for AI Unidirectional Threat Detection
-# Safe to rerun: installs only missing prerequisites.
+# Safe to rerun: installs only missing prerequisites, skips the build if the
+# checked-out Zeek commit was already built.
 # Location: <project>/scripts/windows/setup-zeek.ps1
 #
 # Zeek Windows support is experimental. Live capture needs Npcap (installed
@@ -9,15 +10,25 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\setup-zeek.ps1
 #   ... -ZeekRef v7.0.0     # pin a specific Zeek tag/branch
 #   ... -SkipElevation      # when already running as Administrator
+#   ... -Rebuild            # force a rebuild even if this commit was built
+#   ... -Clean              # delete the old Zeek checkout + build and start fresh
+#                           # (cached downloads, Npcap SDK, WinFlexBison are kept)
 
 [CmdletBinding()]
 param(
     [switch]$SkipElevation,
+    [switch]$Rebuild,
+    [switch]$Clean,
     [string]$ZeekRef = ""
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+# Pinned download versions (bump here when they go stale).
+$NpcapVersion    = "1.89"
+$NpcapSdkVersion = "1.16"
+$WinFlexBisonVer = "2.5.25"
 
 # scripts\windows -> scripts -> project root (two levels up)
 $root       = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -26,6 +37,7 @@ $source     = Join-Path $thirdParty "zeek"
 $build      = Join-Path $source "build"
 $sdkRoot    = Join-Path $thirdParty "npcap-sdk"
 $logFile    = Join-Path $root "windows-bootstrap.log"
+$stampFile  = Join-Path $build ".built-commit"
 
 # ---------------------------------------------------------------- helpers
 
@@ -39,17 +51,23 @@ function Ensure-Elevated {
     if ($SkipElevation -or (Test-Administrator)) { return }
 
     Write-Host "[windows-bootstrap] Requesting Administrator privileges..."
-    $refArg = ""
-    if ($ZeekRef) { $refArg = " -ZeekRef '$ZeekRef'" }
+    $extra = ""
+    if ($ZeekRef) { $extra += " -ZeekRef '$ZeekRef'" }
+    if ($Rebuild) { $extra += " -Rebuild" }
+    if ($Clean)   { $extra += " -Clean" }
 
     # The elevated window logs everything and stays open on failure so the
     # error can actually be read.
     $inner = "Start-Transcript -Path '$logFile' -Force | Out-Null; " +
-             "try { & '$PSCommandPath' -SkipElevation$refArg; `$code = `$LASTEXITCODE; if (`$null -eq `$code) { `$code = 0 } } " +
+             "try { & '$PSCommandPath' -SkipElevation$extra; `$code = `$LASTEXITCODE; if (`$null -eq `$code) { `$code = 0 } } " +
              "catch { Write-Host `$_ -ForegroundColor Red; `$code = 1; Read-Host 'Setup failed. Press Enter to close' } " +
              "finally { Stop-Transcript | Out-Null }; exit `$code"
 
-    $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $inner)
+    # EncodedCommand sidesteps all Start-Process argument quoting problems
+    # (paths with spaces, embedded quotes).
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
+    $psArgs  = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded)
+
     $child = Start-Process -FilePath "powershell.exe" -Verb RunAs `
         -ArgumentList $psArgs -WorkingDirectory $root -Wait -PassThru
     if ($child.ExitCode -ne 0) {
@@ -85,9 +103,15 @@ function Invoke-WingetInstall([string]$Id, [string]$Override = "") {
     if ($Override) { $arguments += @("--override", $Override) }
 
     & winget.exe @arguments
-    # 3010 = success, reboot required. -1978335189 = already installed / no upgrade.
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010 -and $LASTEXITCODE -ne -1978335189) {
-        throw "WinGet failed to install $Id (exit code $LASTEXITCODE)."
+    $code = $LASTEXITCODE
+
+    # 0 = ok, 3010 = ok/reboot required,
+    # -1978335189 = no applicable upgrade, -1978335135 = already installed.
+    $ok = @(0, 3010, -1978335189, -1978335135)
+    # Reset so a tolerated non-zero code never leaks out as the script's exit code.
+    $global:LASTEXITCODE = 0
+    if ($ok -notcontains $code) {
+        throw "WinGet failed to install $Id (exit code $code)."
     }
 }
 
@@ -96,6 +120,36 @@ function Ensure-Tool([string]$Command, [string]$WingetId) {
         Invoke-WingetInstall $WingetId
         Refresh-Path
     }
+}
+
+function Download-File([string]$Url, [string]$OutFile) {
+    # Reuse a previously downloaded file instead of downloading again.
+    if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 0)) {
+        Write-Host "[windows-bootstrap] Using cached download: $OutFile"
+        return
+    }
+    $dir = Split-Path -Parent $OutFile
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    # TLS 1.2 explicitly: Windows PowerShell 5.1 may default to older protocols.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+    } catch {
+        # Never leave a partial file behind to be mistaken for a cache hit.
+        if (Test-Path $OutFile) { Remove-Item -Force $OutFile -ErrorAction SilentlyContinue }
+        throw
+    }
+}
+
+# Reliable recursive delete (handles read-only .git files and very long paths).
+function Remove-Tree([string]$Path) {
+    if (-not (Test-Path $Path)) { return }
+    & cmd.exe /d /c "rmdir /s /q `"$Path`"" | Out-Null
+    $global:LASTEXITCODE = 0
+    if (Test-Path $Path) {
+        Remove-Item -Recurse -Force $Path -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $Path) { throw "Could not delete $Path. Close anything using it and rerun." }
 }
 
 # ---------------------------------------------------------------- Npcap
@@ -115,13 +169,10 @@ function Ensure-Npcap {
     }
 
     # The free Npcap edition only installs interactively (silent mode is OEM-only).
-    $downloadDir = Join-Path $thirdParty "downloads"
-    New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
-    $installer = Join-Path $downloadDir "npcap-1.89.exe"
-    $url = "https://npcap.com/dist/npcap-1.89.exe"
+    $installer = Join-Path $thirdParty "downloads\npcap-$NpcapVersion.exe"
 
     Write-Host "[windows-bootstrap] Downloading official Npcap installer..."
-    Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+    Download-File "https://npcap.com/dist/npcap-$NpcapVersion.exe" $installer
 
     Write-Host "[windows-bootstrap] Launching Npcap installer."
     Write-Host "[windows-bootstrap] IMPORTANT: tick 'Install Npcap in WinPcap API-compatible Mode'."
@@ -162,13 +213,10 @@ function Ensure-NpcapSdk {
         return $existing
     }
 
-    $downloadDir = Join-Path $thirdParty "downloads"
-    New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
-    $zip = Join-Path $downloadDir "npcap-sdk-1.16.zip"
-    $url = "https://npcap.com/dist/npcap-sdk-1.16.zip"
+    $zip = Join-Path $thirdParty "downloads\npcap-sdk-$NpcapSdkVersion.zip"
 
     Write-Host "[windows-bootstrap] Downloading official Npcap SDK..."
-    Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+    Download-File "https://npcap.com/dist/npcap-sdk-$NpcapSdkVersion.zip" $zip
 
     if (Test-Path $sdkRoot) { Remove-Item -Recurse -Force $sdkRoot }
     New-Item -ItemType Directory -Force -Path $sdkRoot | Out-Null
@@ -187,11 +235,17 @@ function Ensure-NpcapSdk {
 
 # ---------------------------------------------------------------- toolchain
 
-function Ensure-DeveloperMode {
+function Ensure-SystemSettings {
+    # Developer Mode: lets git create symlinks for the Zeek source tree.
     $key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"
     New-Item -Path $key -Force | Out-Null
     New-ItemProperty -Path $key -Name "AllowDevelopmentWithoutDevLicense" -PropertyType DWord -Value 1 -Force | Out-Null
     Write-Host "[windows-bootstrap] Windows Developer Mode is enabled for Zeek source symlinks."
+
+    # Long paths: Zeek's submodules and build tree can exceed MAX_PATH (260).
+    $fs = "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"
+    New-ItemProperty -Path $fs -Name "LongPathsEnabled" -PropertyType DWord -Value 1 -Force | Out-Null
+    Write-Host "[windows-bootstrap] Windows long path support is enabled."
 }
 
 function Find-VcVars {
@@ -202,7 +256,9 @@ function Find-VcVars {
     foreach ($vswhere in $vswhereCandidates) {
         if (Test-Path $vswhere) {
             $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-            if ($LASTEXITCODE -eq 0 -and $installPath) {
+            $code = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+            if ($code -eq 0 -and $installPath) {
                 $vcvars = Join-Path $installPath "VC\Auxiliary\Build\vcvars64.bat"
                 if (Test-Path $vcvars) { return $vcvars }
             }
@@ -244,7 +300,11 @@ function Find-FlexBisonDir {
     foreach ($r in $searchRoots) {
         if (-not (Test-Path $r)) { continue }
         $hit = Get-ChildItem -Path $r -Filter "FlexLexer.h" -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path (Join-Path $_.DirectoryName "win_flex.exe") } |
+            Where-Object {
+                (Test-Path (Join-Path $_.DirectoryName "win_flex.exe")) -and
+                (Test-Path (Join-Path $_.DirectoryName "win_bison.exe")) -and
+                (Test-Path (Join-Path $_.DirectoryName "data\m4sugar\m4sugar.m4"))
+            } |
             Select-Object -First 1
         if ($hit) { return $hit.DirectoryName }
     }
@@ -258,21 +318,19 @@ function Ensure-FlexBison {
         return $dir
     }
 
-    $downloadDir = Join-Path $thirdParty "downloads"
-    New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
-    $zip = Join-Path $downloadDir "win_flex_bison-2.5.25.zip"
-    $url = "https://github.com/lexxmark/winflexbison/releases/download/v2.5.25/win_flex_bison-2.5.25.zip"
+    $zip  = Join-Path $thirdParty "downloads\win_flex_bison-$WinFlexBisonVer.zip"
+    $url  = "https://github.com/lexxmark/winflexbison/releases/download/v$WinFlexBisonVer/win_flex_bison-$WinFlexBisonVer.zip"
     $dest = Join-Path $thirdParty "winflexbison"
 
     Write-Host "[windows-bootstrap] Downloading WinFlexBison..."
-    Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+    Download-File $url $zip
     if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Expand-Archive -Path $zip -DestinationPath $dest -Force
 
     $dir = Find-FlexBisonDir
     if (-not $dir) {
-        throw "WinFlexBison was installed but FlexLexer.h / win_flex.exe were not found."
+        throw "WinFlexBison was downloaded but FlexLexer.h / win_flex.exe were not found."
     }
     return $dir
 }
@@ -305,7 +363,9 @@ function Resolve-ZeekRef {
     # Latest stable release tag (vX.Y.Z, no -rc/-dev), so we don't build a broken master.
     Write-Host "[windows-bootstrap] Looking up latest Zeek release tag..."
     $lines = & git.exe ls-remote --tags --refs https://github.com/zeek/zeek.git "refs/tags/v*"
-    if ($LASTEXITCODE -ne 0 -or -not $lines) {
+    $code = $LASTEXITCODE
+    $global:LASTEXITCODE = 0
+    if ($code -ne 0 -or -not $lines) {
         Write-Warning "Could not list Zeek tags; falling back to master."
         return "master"
     }
@@ -322,23 +382,43 @@ function Resolve-ZeekRef {
 
 function Ensure-ZeekSource {
     New-Item -ItemType Directory -Force -Path $thirdParty | Out-Null
+
+    if ($Clean -and (Test-Path $source)) {
+        Write-Host "[windows-bootstrap] -Clean: deleting previous Zeek checkout and build..."
+        Remove-Tree $source
+    }
+
     $ref = Resolve-ZeekRef
     Write-Host "[windows-bootstrap] Zeek ref: $ref"
 
     if (-not (Test-Path (Join-Path $source ".git"))) {
         Write-Host "[windows-bootstrap] Cloning official Zeek source..."
-        & git.exe -c core.symlinks=true clone --recursive --branch $ref https://github.com/zeek/zeek.git $source
-        if ($LASTEXITCODE -ne 0) { throw "Zeek source clone failed." }
+        & git.exe -c core.symlinks=true -c core.longpaths=true clone --recursive --branch $ref https://github.com/zeek/zeek.git $source
+        if ($LASTEXITCODE -ne 0) {
+            # Remove the partial clone so the next run starts clean instead of
+            # taking the "existing checkout" path on a half-cloned tree.
+            if (Test-Path $source) { Remove-Item -Recurse -Force $source -ErrorAction SilentlyContinue }
+            throw "Zeek source clone failed."
+        }
         return
     }
 
     Push-Location $source
     try {
         Write-Host "[windows-bootstrap] Updating existing Zeek checkout..."
+        & git.exe config core.longpaths true
         & git.exe fetch --tags origin
         if ($LASTEXITCODE -ne 0) { throw "git fetch failed." }
         & git.exe -c core.symlinks=true checkout $ref
         if ($LASTEXITCODE -ne 0) { throw "git checkout $ref failed." }
+        # A branch ref (e.g. master) should follow its remote.
+        & git.exe show-ref --verify --quiet "refs/remotes/origin/$ref"
+        $isBranch = ($LASTEXITCODE -eq 0)
+        $global:LASTEXITCODE = 0
+        if ($isBranch) {
+            & git.exe merge --ff-only "origin/$ref"
+            if ($LASTEXITCODE -ne 0) { throw "git fast-forward to origin/$ref failed." }
+        }
         & git.exe submodule update --init --recursive
         if ($LASTEXITCODE -ne 0) { throw "Zeek submodule update failed." }
     } finally {
@@ -346,15 +426,26 @@ function Ensure-ZeekSource {
     }
 }
 
-function Build-Zeek([string]$NpcapSdk, [string]$VcVars) {
-    New-Item -ItemType Directory -Force -Path $build | Out-Null
-
-    # A previously failed configure leaves a stale CMakeCache (e.g. "sed not found").
-    if ((Test-Path (Join-Path $build "CMakeCache.txt")) -and -not (Test-Path (Join-Path $build "build.ninja"))) {
-        Write-Host "[windows-bootstrap] Clearing stale failed CMake configure..."
-        Remove-Item -Recurse -Force $build
-        New-Item -ItemType Directory -Force -Path $build | Out-Null
+function Get-ZeekCommit {
+    Push-Location $source
+    try {
+        $sha = (& git.exe rev-parse HEAD).Trim()
+        $global:LASTEXITCODE = 0
+        return $sha
+    } finally {
+        Pop-Location
     }
+}
+
+function Build-Zeek([string]$NpcapSdk, [string]$VcVars) {
+    # If a previous attempt never completed (no stamp), or -Rebuild was given,
+    # its CMake cache / half-built objects may be stale. Wipe only the build
+    # directory and reconfigure; the cloned source and downloads are kept.
+    if ((Test-Path $build) -and ($Rebuild -or -not (Test-Path $stampFile))) {
+        Write-Host "[windows-bootstrap] Clearing previous incomplete build directory..."
+        Remove-Tree $build
+    }
+    New-Item -ItemType Directory -Force -Path $build | Out-Null
 
     # Git's Unix tools go at the END of PATH so they don't shadow find.exe/sort.exe.
     $gitUsrBin = Find-GitUsrBin
@@ -362,15 +453,20 @@ function Build-Zeek([string]$NpcapSdk, [string]$VcVars) {
     $env:Path = "$env:Path;$gitUsrBin"
 
     # flex/bison + FlexLexer.h (Spicy needs the header location explicitly).
+    # It must come FIRST on PATH: the WinGet "Links" shim of win_bison.exe
+    # cannot find its data\m4sugar folder and breaks Spicy's parser generation.
     $flexDir = Ensure-FlexBison
-    $env:Path = "$env:Path;$flexDir"
+    $env:Path = "$flexDir;$env:Path"
+    $env:BISON_PKGDATADIR = Join-Path $flexDir "data"
+    $bisonExe = Join-Path $flexDir "win_bison.exe"
+    $flexExe  = Join-Path $flexDir "win_flex.exe"
 
     # Batch file avoids PowerShell/cmd quoting problems.
     $cmdFile = Join-Path $build "build-zeek.cmd"
     $batch = @"
 @echo off
 call "$VcVars" x64 || exit /b 1
-cmake.exe .. -G Ninja -DCMAKE_BUILD_TYPE=release -DENABLE_CLUSTER_BACKEND_ZEROMQ=no -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPCAP_ROOT_DIR="$NpcapSdk" -DFLEX_INCLUDE_DIR="$flexDir" -DFLEX_INCLUDE_DIRS="$flexDir" || exit /b 1
+cmake.exe .. -G Ninja -DCMAKE_BUILD_TYPE=release -DENABLE_CLUSTER_BACKEND_ZEROMQ=no -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPCAP_ROOT_DIR="$NpcapSdk" -DFLEX_INCLUDE_DIR="$flexDir" -DFLEX_INCLUDE_DIRS="$flexDir" -DBISON_EXECUTABLE="$bisonExe" -DFLEX_EXECUTABLE="$flexExe" || exit /b 1
 cmake.exe --build . || exit /b 1
 "@
     Set-Content -Path $cmdFile -Value $batch -Encoding ASCII
@@ -378,10 +474,26 @@ cmake.exe --build . || exit /b 1
     Push-Location $build
     try {
         Write-Host "[windows-bootstrap] Configuring and building Zeek (this takes a long time)..."
-        & cmd.exe /d /c $cmdFile
-        if ($LASTEXITCODE -ne 0) {
-            throw "Zeek native build failed (exit code $LASTEXITCODE)."
+        $buildLog = Join-Path $build "build-zeek.log"
+        # Continue (not Stop) so native stderr piped through 2>&1 isn't turned
+        # into a terminating error on Windows PowerShell 5.1.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & cmd.exe /d /c $cmdFile 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $buildLog
+            $buildCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevEap
         }
+        if ($buildCode -ne 0) {
+            Write-Host ""
+            Write-Host "[windows-bootstrap] ---- Build failed. Key lines from the log ----" -ForegroundColor Red
+            Select-String -Path $buildLog -Pattern "CMake Error|FAILED:|error C\d+|error:|fatal error|Could NOT find|not found|No such file" |
+                Select-Object -Last 25 | ForEach-Object { Write-Host $_.Line }
+            Write-Host "[windows-bootstrap] Full log: $buildLog" -ForegroundColor Red
+            throw "Zeek native build failed (exit code $buildCode). See $buildLog"
+        }
+        $global:LASTEXITCODE = 0
     } finally {
         Pop-Location
     }
@@ -395,7 +507,7 @@ Write-Host "=== AI Unidirectional Threat Detection - Windows Zeek Bootstrap ==="
 Write-Host "[windows-bootstrap] Project root: $root"
 Write-Host ""
 
-Ensure-DeveloperMode
+Ensure-SystemSettings
 Ensure-WindowsTools
 Ensure-Npcap
 $sdk = Ensure-NpcapSdk
@@ -406,14 +518,25 @@ if (-not $vcvars) {
     throw "MSVC vcvars64.bat was not found. Restart Windows if the installer requested it, then rerun."
 }
 
-Build-Zeek $sdk $vcvars
-
 $binary = Join-Path $build "src\zeek.exe"
-if (-not (Test-Path $binary)) {
-    throw "Zeek build completed without producing $binary"
+$commit = Get-ZeekCommit
+$built  = $null
+if (Test-Path $stampFile) { $built = (Get-Content $stampFile -ErrorAction SilentlyContinue | Select-Object -First 1) }
+
+if ((-not $Rebuild) -and (Test-Path $binary) -and ($built -eq $commit)) {
+    Write-Host "[windows-bootstrap] Zeek $commit already built; skipping build (use -Rebuild to force)."
+} else {
+    Build-Zeek $sdk $vcvars
+    if (-not (Test-Path $binary)) {
+        throw "Zeek build completed without producing $binary"
+    }
+    Set-Content -Path $stampFile -Value $commit -Encoding ASCII
 }
 
 Write-Host ""
 Write-Host "[windows-bootstrap] SUCCESS"
 Write-Host "[windows-bootstrap] Zeek binary: $binary"
 Write-Host "[windows-bootstrap] You can now run: python app.py"
+
+# Explicit success code: never inherit a stale $LASTEXITCODE from a native tool.
+exit 0

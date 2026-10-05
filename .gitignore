@@ -63,3 +63,7 @@ src/models/cleaned_data*.csv
 # Keep only the deployed unidirectional runtime artifacts under src/models/pkl.
 src/models/pkl/*_detector.pkl
 src/models/*_detector.pkl
+
+
+
+/.third_party

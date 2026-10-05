@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / ".venv"
 PYTHON = sys.executable
 PRIVILEGED_FLAG = "--privileged"
+PAUSE_FLAG = "--pause-on-exit"  # set on the elevated Windows window so errors stay readable
 BACKEND_HOST = os.environ.get("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = os.environ.get("BACKEND_PORT", "8000")
 DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
@@ -47,7 +48,12 @@ def ensure_python_environment() -> None:
                 check=True,
             )
         print("[launcher] Using project Python environment: " + str(target))
-        os.execv(str(target), [str(target), str(Path(__file__).resolve()), *sys.argv[1:]])
+        args = [str(target), str(Path(__file__).resolve()), *sys.argv[1:]]
+        if os.name == "nt":
+            # os.execv does not replace the process on Windows: the parent exits
+            # immediately and the console returns while the child still runs.
+            raise SystemExit(subprocess.call(args, cwd=ROOT))
+        os.execv(str(target), args)
 
     requirements = ROOT / "requirements.txt"
     marker = VENV_DIR / ".dependencies-ready"
@@ -66,8 +72,27 @@ def ensure_python_environment() -> None:
     if result.returncode != 0:
         raise RuntimeError("Python dependency installation failed.")
 
-    marker.write_text("ready\\n", encoding="utf-8")
+    marker.write_text("ready\n", encoding="utf-8")
     print("[launcher] Python dependencies ready.")
+
+
+def check_python_imports() -> None:
+    required_imports = {
+        "fastapi": "fastapi", "uvicorn": "uvicorn", "flask": "Flask",
+        "dotenv": "python-dotenv", "google.genai": "google-genai",
+        "pandas": "pandas", "sklearn": "scikit-learn",
+    }
+    missing = []
+    for module, package in required_imports.items():
+        try:
+            __import__(module)
+        except ImportError:
+            missing.append(package)
+    if missing:
+        raise RuntimeError(
+            "Missing Python dependencies after installation: "
+            + ", ".join(sorted(set(missing)))
+        )
 
 
 def ensure_capture_privileges() -> None:
@@ -76,18 +101,19 @@ def ensure_capture_privileges() -> None:
         return
 
     if os.name == "nt":
-        try:
-            import ctypes
+        import ctypes
 
+        try:
             is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
         except (AttributeError, OSError):
             is_admin = False
 
         if not is_admin:
-            print("[launcher] Live capture requires administrator privileges; requesting UAC...")
-            import ctypes
-
-            params = subprocess.list2cmdline([str(Path(__file__).resolve()), *sys.argv[1:]])
+            print("[launcher] Live capture and the Zeek build need administrator privileges; requesting UAC...")
+            extra = [a for a in sys.argv[1:] if a != PAUSE_FLAG]
+            params = subprocess.list2cmdline(
+                [str(Path(__file__).resolve()), *extra, PAUSE_FLAG]
+            )
             result = ctypes.windll.shell32.ShellExecuteW(
                 None,
                 "runas",
@@ -98,6 +124,7 @@ def ensure_capture_privileges() -> None:
             )
             if result <= 32:
                 raise RuntimeError("Windows elevation was denied or failed.")
+            # The elevated window takes over from here.
             raise SystemExit(0)
         return
 
@@ -113,38 +140,33 @@ def ensure_capture_privileges() -> None:
         env["AI_UD_PRIV_ESCALATED"] = "1"
         os.execvpe(
             sudo,
-            [sudo, "-E", sys.executable, str(Path(__file__).resolve()), PRIVILEGED_FLAG, *[arg for arg in sys.argv[1:] if arg != PRIVILEGED_FLAG]],
+            [sudo, "-E", sys.executable, str(Path(__file__).resolve()), PRIVILEGED_FLAG,
+             *[arg for arg in sys.argv[1:] if arg != PRIVILEGED_FLAG]],
             env,
         )
 
 
-def preflight():
-    ensure_python_environment()
-
+def ensure_zeek() -> None:
     zeek = ZeekInstaller()
-    if not zeek.find_local_zeek() and not shutil.which("zeek") and not shutil.which("zeek.exe"):
-        result = zeek.ensure(auto_install=True)
-        if not result.installed:
-            raise RuntimeError("Zeek setup is incomplete: " + (result.message or "unknown installation error"))
-        print("[launcher] Zeek ready (" + str(result.method) + ").")
-    else:
+    if zeek.find_local_zeek() or shutil.which("zeek") or shutil.which("zeek.exe"):
         print("[launcher] Zeek ready (existing).")
+        return
 
+    print("[launcher] Zeek not found; building it now (first run takes a long time)...")
+    result = zeek.ensure(auto_install=True)
+    if not result.installed:
+        raise RuntimeError(
+            "Zeek setup is incomplete: " + (result.message or "unknown installation error")
+        )
+    print("[launcher] Zeek ready (" + str(result.method) + ").")
+
+
+def preflight():
+    # Order matters: cheap checks first, elevate once, then the long Zeek build.
+    ensure_python_environment()
+    check_python_imports()
     ensure_capture_privileges()
-
-    required_imports = {
-        "fastapi": "fastapi", "uvicorn": "uvicorn", "flask": "Flask",
-        "dotenv": "python-dotenv", "google.genai": "google-genai",
-        "pandas": "pandas", "sklearn": "scikit-learn",
-    }
-    missing = []
-    for module, package in required_imports.items():
-        try:
-            __import__(module)
-        except ImportError:
-            missing.append(package)
-    if missing:
-        raise RuntimeError("Missing Python dependencies after installation: " + ", ".join(sorted(set(missing))))
+    ensure_zeek()
 
 
 def wait_for_url(url, process, name, timeout=60.0):
@@ -230,4 +252,11 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    code = main()
+    if code != 0 and PAUSE_FLAG in sys.argv:
+        # The elevated Windows window would close instantly and hide the error.
+        try:
+            input("\n[launcher] Failed. Press Enter to close...")
+        except EOFError:
+            pass
+    raise SystemExit(code)
