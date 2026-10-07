@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from pathlib import Path
+import ctypes
 import json
 import os
 import shutil
@@ -11,7 +12,6 @@ import subprocess
 import time
 
 from src.zeek.installer import ZeekInstaller
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = REPO_ROOT / "data" / "processed" / "zeek" / "live"
@@ -26,6 +26,92 @@ COMMON_ZEEK_PATHS = (
     "/usr/local/bin/zeek",
     "/usr/bin/zeek",
 )
+
+# ---------------------------------------------------------------------------
+# Windows Job Object: guarantees Zeek dies when this process dies
+# ---------------------------------------------------------------------------
+
+_JOB_HANDLE = None  # must stay alive as long as this process lives
+
+
+def _assign_to_kill_on_close_job(pid: int) -> None:
+    """Windows only: make the given process die automatically when this
+    process exits for any reason (crash, console closed, force-kill)."""
+    global _JOB_HANDLE
+    if os.name != "nt":
+        return
+
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            (n, ctypes.c_ulonglong)
+            for n in (
+                "ReadOps",
+                "WriteOps",
+                "OtherOps",
+                "ReadBytes",
+                "WriteBytes",
+                "OtherBytes",
+            )
+        ]
+
+    class BASIC(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class EXTENDED(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", BASIC),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    if _JOB_HANDLE is None:
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return
+        info = EXTENDED()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+        # 9 = JobObjectExtendedLimitInformation
+        if not k32.SetInformationJobObject(
+            job, 9, ctypes.byref(info), ctypes.sizeof(info)
+        ):
+            k32.CloseHandle(job)
+            return
+        _JOB_HANDLE = job
+
+    # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+    proc = k32.OpenProcess(0x0100 | 0x0001, False, pid)
+    if proc:
+        k32.AssignProcessToJobObject(_JOB_HANDLE, proc)
+        k32.CloseHandle(proc)
 
 
 @dataclass
@@ -73,6 +159,9 @@ class ZeekManager:
         auto_install: bool = True,
     ) -> None:
         self.log_dir = Path(log_dir).resolve()
+        # Remembered so clear_logs() can fall back to a session subfolder
+        # and start() can return to the base folder when it is free again.
+        self._base_log_dir = self.log_dir
         self.auto_install = auto_install
         self.zeek_binary = zeek_binary or self._find_zeek()
         self.process: subprocess.Popen | None = None
@@ -82,7 +171,7 @@ class ZeekManager:
         self._version_cache: str | None = None
         self._stderr_file = None
         # Outside log_dir so clear_logs() never deletes it.
-        self.stderr_path = self.log_dir.parent / "zeek-live-stderr.txt"
+        self.stderr_path = self._base_log_dir.parent / "zeek-live-stderr.txt"
 
     @staticmethod
     def _find_zeek() -> str:
@@ -146,7 +235,12 @@ class ZeekManager:
         if not (scripts / "base" / "init-bare.zeek").is_file():
             return env  # system install: Zeek knows its own paths
 
-        parts = [scripts, scripts / "policy", scripts / "site", ZEEK_SOURCE_DIR / "build" / "scripts"]
+        parts = [
+            scripts,
+            scripts / "policy",
+            scripts / "site",
+            ZEEK_SOURCE_DIR / "build" / "scripts",
+        ]
         env["ZEEKPATH"] = os.pathsep.join(str(p) for p in parts if p.is_dir())
         return env
 
@@ -174,13 +268,18 @@ class ZeekManager:
         return [item["name"] for item in self.list_interface_details()]
 
     @staticmethod
-    def _interface_kind(name: str, wireless: bool = False, virtual: bool = False) -> str:
+    def _interface_kind(
+        name: str, wireless: bool = False, virtual: bool = False
+    ) -> str:
         lower = name.lower()
         if lower in {"lo", "lo0", "loopback"} or lower.startswith("loopback"):
             return "loopback"
         if wireless:
             return "wifi"
-        if virtual or any(token in lower for token in ("docker", "veth", "virbr", "br-", "tun", "tap", "vmnet")):
+        if virtual or any(
+            token in lower
+            for token in ("docker", "veth", "virbr", "br-", "tun", "tap", "vmnet")
+        ):
             return "virtual"
         if lower.startswith(("en", "eth", "em", "eno", "ens", "enp")):
             return "ethernet"
@@ -212,7 +311,10 @@ class ZeekManager:
         try:
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                capture_output=True, text=True, check=False, timeout=15,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except (OSError, subprocess.SubprocessError):
@@ -235,7 +337,15 @@ class ZeekManager:
             wireless = any(t in lower_desc for t in ("wi-fi", "wireless", "802.11"))
             virtual = bool(item.get("Virtual")) or any(
                 t in lower_desc
-                for t in ("virtual", "vmware", "hyper-v", "vbox", "wireguard", "tap-", "vethernet")
+                for t in (
+                    "virtual",
+                    "vmware",
+                    "hyper-v",
+                    "vbox",
+                    "wireguard",
+                    "tap-",
+                    "vethernet",
+                )
             )
             kind = self._interface_kind(name, wireless=wireless, virtual=virtual)
             loopback = kind == "loopback"
@@ -250,13 +360,21 @@ class ZeekManager:
             elif not up:
                 reason = "Interface is not up."
 
-            details.append(InterfaceInfo(
-                name=name,
-                display_name=f"{name} - {desc}" if desc else name,
-                kind=kind, up=up, running=up, loopback=loopback, virtual=virtual,
-                mac=item.get("MacAddress"), usable=usable, reason=reason,
-                capture_name=capture_name,
-            ))
+            details.append(
+                InterfaceInfo(
+                    name=name,
+                    display_name=f"{name} - {desc}" if desc else name,
+                    kind=kind,
+                    up=up,
+                    running=up,
+                    loopback=loopback,
+                    virtual=virtual,
+                    mac=item.get("MacAddress"),
+                    usable=usable,
+                    reason=reason,
+                    capture_name=capture_name,
+                )
+            )
         return [d.to_dict() for d in details]
 
     # -------------------------------------------------------- Linux / macOS
@@ -270,7 +388,9 @@ class ZeekManager:
             wireless = (base / "wireless").exists()
             virtual = not (base / "device").exists() if base.exists() else False
             try:
-                operstate = (base / "operstate").read_text(encoding="utf-8").strip().lower()
+                operstate = (
+                    (base / "operstate").read_text(encoding="utf-8").strip().lower()
+                )
             except (OSError, UnicodeError):
                 pass
             try:
@@ -288,11 +408,21 @@ class ZeekManager:
                 reason = "Loopback is not a normal live-capture adapter."
             elif not up:
                 reason = "Interface is not up."
-            details.append(InterfaceInfo(
-                name=name, display_name=name, kind=kind, up=up, running=up,
-                loopback=loopback, virtual=virtual, mac=mac, usable=usable,
-                reason=reason, capture_name=name,
-            ))
+            details.append(
+                InterfaceInfo(
+                    name=name,
+                    display_name=name,
+                    kind=kind,
+                    up=up,
+                    running=up,
+                    loopback=loopback,
+                    virtual=virtual,
+                    mac=mac,
+                    usable=usable,
+                    reason=reason,
+                    capture_name=name,
+                )
+            )
         return [d.to_dict() for d in details]
 
     def _raw_interface_names(self) -> list[str]:
@@ -306,13 +436,22 @@ class ZeekManager:
         except (AttributeError, OSError):
             pass
         try:
-            result = subprocess.run(["ip", "-o", "link", "show"], capture_output=True, text=True, check=False, timeout=10)
+            result = subprocess.run(
+                ["ip", "-o", "link", "show"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
         except (OSError, subprocess.SubprocessError):
             return []
-        return sorted(dict.fromkeys(
-            parts[1].split(":", 1)[0] for line in result.stdout.splitlines()
-            if len(parts := line.split(": ", 1)) == 2 and parts[1].split(":", 1)[0]
-        ))
+        return sorted(
+            dict.fromkeys(
+                parts[1].split(":", 1)[0]
+                for line in result.stdout.splitlines()
+                if len(parts := line.split(": ", 1)) == 2 and parts[1].split(":", 1)[0]
+            )
+        )
 
     @staticmethod
     def _ifconfig_interface_up(name: str) -> bool:
@@ -327,35 +466,77 @@ class ZeekManager:
         except (OSError, subprocess.SubprocessError):
             return False
         output = result.stdout.lower()
-        return result.returncode == 0 and ("status: active" in output or " flags=" in output and "<up" in output)
+        return result.returncode == 0 and (
+            "status: active" in output or " flags=" in output and "<up" in output
+        )
 
     # ----------------------------------------------------------- validation
 
-    def validate_interface(self, interface: str, refresh: bool = False) -> dict[str, object]:
+    def validate_interface(
+        self, interface: str, refresh: bool = False
+    ) -> dict[str, object]:
         """Validate that an interface is suitable for normal live capture."""
         details = next(
             (
-                item for item in self.list_interface_details(refresh=refresh)
+                item
+                for item in self.list_interface_details(refresh=refresh)
                 if item["name"] == interface or item.get("capture_name") == interface
             ),
             None,
         )
         if details is None:
-            return {"valid": False, "interface": interface, "reason": f"Network interface not found: {interface}"}
+            return {
+                "valid": False,
+                "interface": interface,
+                "reason": f"Network interface not found: {interface}",
+            }
         if details.get("loopback"):
-            return {"valid": False, "interface": interface, "reason": "Loopback interfaces are not supported for normal live capture.", "details": details}
+            return {
+                "valid": False,
+                "interface": interface,
+                "reason": "Loopback interfaces are not supported for normal live capture.",
+                "details": details,
+            }
         if not details.get("up"):
-            return {"valid": False, "interface": interface, "reason": "Interface is not up. Connect or enable the adapter first.", "details": details}
-        return {"valid": True, "interface": interface, "reason": None, "details": details}
+            return {
+                "valid": False,
+                "interface": interface,
+                "reason": "Interface is not up. Connect or enable the adapter first.",
+                "details": details,
+            }
+        return {
+            "valid": True,
+            "interface": interface,
+            "reason": None,
+            "details": details,
+        }
 
-    def clear_logs(self) -> None:
-        """Remove logs from the dedicated live-capture directory."""
+    # ---------------------------------------------------------------- logs
+
+    def clear_logs(self) -> list[Path]:
+        """Remove logs from the live-capture directory.
+
+        Files held open by another process (e.g. an orphaned Zeek from a
+        previous run) can't be deleted on Windows. In that case switch to a
+        fresh session subdirectory instead of crashing. Returns the files
+        that were locked.
+        """
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        locked: list[Path] = []
         for path in self.log_dir.glob("*.log"):
             try:
                 path.unlink()
             except FileNotFoundError:
                 pass
+            except PermissionError:
+                locked.append(path)
+
+        if locked:
+            self.log_dir = (
+                self._base_log_dir / f"session-{time.strftime('%Y%m%d-%H%M%S')}"
+            )
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+        return locked
 
     def log_status(self) -> dict[str, bool]:
         return {name: (self.log_dir / name).exists() for name in LIVE_LOGS}
@@ -392,7 +573,9 @@ class ZeekManager:
     def _read_stderr(self) -> str:
         self._close_stderr_file()
         try:
-            text = self.stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+            text = self.stderr_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).strip()
         except OSError:
             return ""
         return text[-2000:]  # keep the tail, that's where the error is
@@ -402,7 +585,10 @@ class ZeekManager:
         code = self.process.returncode if self.process is not None else None
         detail = self._read_stderr()
         if not detail:
-            detail = f"no output (exit code {code}). Run Zeek manually to see why: {self.zeek_binary} -i <iface> -C local"
+            detail = (
+                f"no output (exit code {code}). Run Zeek manually to see why: "
+                f"{self.zeek_binary} -i <iface> -C local"
+            )
         return self._diagnose_start_error(detail)
 
     def _diagnose_start_error(self, detail: str) -> str:
@@ -410,28 +596,46 @@ class ZeekManager:
         lower = detail.lower()
         iface = self.interface or "selected interface"
 
-        if "permission" in lower or "operation not permitted" in lower or "access denied" in lower:
+        if (
+            "permission" in lower
+            or "operation not permitted" in lower
+            or "access denied" in lower
+        ):
             return (
                 f"Zeek could not capture interface '{iface}': "
                 f"{detail or 'permission denied'}. "
                 "Run the launcher with the required packet-capture privileges."
             )
 
-        if any(t in lower for t in ("can't find", "cannot find", "unable to find", "local.zeek", "base/init", "zeekpath")):
+        if any(
+            t in lower
+            for t in (
+                "can't find",
+                "cannot find",
+                "unable to find",
+                "local.zeek",
+                "base/init",
+                "zeekpath",
+            )
+        ):
             return (
                 f"Zeek cannot find its script files: {detail}. "
                 f"Expected the Zeek source scripts at {ZEEK_SOURCE_DIR / 'scripts'} "
                 "(or set the ZEEKPATH environment variable to your Zeek scripts folder)."
             )
 
-        if os.name == "nt" and any(token in lower for token in ("npcap", "wpcap", "pcap", "winpcap")):
+        if os.name == "nt" and any(
+            token in lower for token in ("npcap", "wpcap", "pcap", "winpcap")
+        ):
             return (
                 f"Zeek could not open Windows capture interface '{iface}': "
                 f"{detail}. Verify that Npcap is installed and that this Zeek build was linked "
                 "against the Npcap SDK."
             )
 
-        if any(token in lower for token in ("interface", "device", "no such", "not found")):
+        if any(
+            token in lower for token in ("interface", "device", "no such", "not found")
+        ):
             return (
                 f"Zeek could not open interface '{iface}': "
                 f"{detail or 'device was not found'}. "
@@ -457,6 +661,9 @@ class ZeekManager:
         details = validation.get("details") or {}
         capture_name = details.get("capture_name") or interface
 
+        # Try the base folder first; clear_logs() falls back to a session
+        # subfolder only if something still has the old logs open.
+        self.log_dir = self._base_log_dir
         self.clear_logs()
 
         command = [
@@ -473,7 +680,9 @@ class ZeekManager:
         # stderr goes to a file: survives process exit, can't fill a pipe and block.
         self._close_stderr_file()
         self.stderr_path.parent.mkdir(parents=True, exist_ok=True)
-        self._stderr_file = open(self.stderr_path, "w", encoding="utf-8", errors="replace")
+        self._stderr_file = open(
+            self.stderr_path, "w", encoding="utf-8", errors="replace"
+        )
         self._stderr_file.write(f"# command: {' '.join(command)}\n")
         self._stderr_file.write(f"# ZEEKPATH: {env.get('ZEEKPATH', '(default)')}\n")
         self._stderr_file.flush()
@@ -497,7 +706,16 @@ class ZeekManager:
         except OSError as exc:
             self._close_stderr_file()
             self.process = None
-            raise RuntimeError(f"Could not launch Zeek ({self.zeek_binary}): {exc}") from exc
+            raise RuntimeError(
+                f"Could not launch Zeek ({self.zeek_binary}): {exc}"
+            ) from exc
+
+        # Windows: tie Zeek's lifetime to this process so it can never be orphaned.
+        try:
+            _assign_to_kill_on_close_job(self.process.pid)
+        except Exception:
+            pass  # best effort; never block startup on this
+
         self.interface = interface
 
         # Zeek must stay alive for the grace period; a bad script path or
