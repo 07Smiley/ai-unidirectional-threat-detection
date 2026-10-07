@@ -84,6 +84,10 @@ _BACKEND_HOST = os.environ.get("BACKEND_HOST", "127.0.0.1")
 _BACKEND_PORT = os.environ.get("BACKEND_PORT", "8000")
 LIVE_API_URL = f"http://{_BACKEND_HOST}:{_BACKEND_PORT}"
 
+_PROXY_TIMEOUT = float(os.environ.get("LIVE_PROXY_TIMEOUT", "60"))
+_PROXY_EXACT_PATHS = {"health"}
+_PROXY_PREFIXES = ("api/live/",)
+
 
 # =============================================================================
 # GEMINI CLIENT
@@ -1036,32 +1040,152 @@ def home():
     return render_template("index.html", live_api=LIVE_API_URL)
 
 
-@app.route("/live-api/<path:path>", methods=["GET", "POST"])
-def live_api_proxy(path):
-    """Same-origin proxy to the FastAPI sensor — the Start/Stop buttons go
-    through here so the browser never needs CORS to reach port 8000."""
-    if not path.startswith("api/live/"):
-        return jsonify({"detail": "Not allowed."}), 404
-    data = request.get_data() if request.method == "POST" else None
-    req = urllib.request.Request(
-        f"{LIVE_API_URL}/{path}",
-        data=data,
-        method=request.method,
-        headers={"Content-Type": request.headers.get("Content-Type", "application/json")},
-    )
+def _proxy_path_allowed(path):
+    return path in _PROXY_EXACT_PATHS or path.startswith(_PROXY_PREFIXES)
+
+
+def _forward(method, path, query="", data=None, content_type=None, timeout=None):
+    """Call the FastAPI sensor. Returns (status_code, body_bytes, content_type).
+    HTTP error statuses are returned, not raised; connection errors raise."""
+    url = f"{LIVE_API_URL}/{path}"
+    if query:
+        url += "?" + query
+    headers = {"Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = content_type or "application/json"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return Response(
-                r.read(), status=r.status,
-                content_type=r.headers.get("Content-Type", "application/json"),
-            )
+        with urllib.request.urlopen(req, timeout=timeout or _PROXY_TIMEOUT) as r:
+            return r.status, r.read(), r.headers.get("Content-Type", "application/json")
     except urllib.error.HTTPError as e:
-        return Response(
-            e.read(), status=e.code,
-            content_type=e.headers.get("Content-Type", "application/json"),
-        )
+        return e.code, e.read(), e.headers.get("Content-Type", "application/json")
+
+
+# The sensor's /api/live/status can take many seconds (interface discovery).
+# The UI polls it every few seconds, so serve the last good answer instantly and
+# refresh it in the background (stale-while-revalidate). Start/Stop/response
+# calls clear the cache so the next status read is always fresh.
+_STATUS_PATH = "api/live/status"
+_STATUS_FRESH_SECONDS = float(os.environ.get("LIVE_STATUS_FRESH", "2"))
+_STATUS_MAX_STALE_SECONDS = float(os.environ.get("LIVE_STATUS_MAX_STALE", "120"))
+_status_cache = {"body": None, "ctype": "application/json", "ts": 0.0}
+_status_lock = threading.Lock()
+_status_refreshing = False
+
+
+def _status_cache_clear():
+    with _status_lock:
+        _status_cache["body"] = None
+        _status_cache["ts"] = 0.0
+
+
+def _status_cache_store(body, ctype):
+    with _status_lock:
+        _status_cache["body"] = body
+        _status_cache["ctype"] = ctype
+        _status_cache["ts"] = time.time()
+
+
+def _refresh_status_cache():
+    global _status_refreshing
+    try:
+        code, body, ctype = _forward("GET", _STATUS_PATH)
+        if code == 200:
+            _status_cache_store(body, ctype)
     except Exception as e:
-        return jsonify({"detail": f"Sensor API unreachable at {LIVE_API_URL}: {e}"}), 502
+        print(f"[Dashboard] Background sensor status refresh failed: {type(e).__name__}: {e}")
+    finally:
+        with _status_lock:
+            _status_refreshing = False
+
+
+@app.route("/live-api/<path:path>", methods=["GET", "POST", "PUT", "DELETE"])
+def live_api_proxy(path):
+    """Same-origin proxy to the FastAPI sensor, so the browser never needs
+    CORS to reach port 8000. Forwards method, body AND query string."""
+    global _status_refreshing
+    if not _proxy_path_allowed(path):
+        return jsonify({"detail": "Not allowed: /" + path}), 404
+
+    query = request.query_string.decode("utf-8", "replace")
+    is_status = request.method == "GET" and path == _STATUS_PATH and not query
+
+    if is_status:
+        start_refresh = False
+        with _status_lock:
+            body = _status_cache["body"]
+            ctype = _status_cache["ctype"]
+            age = time.time() - _status_cache["ts"]
+            if body is not None and age < _STATUS_MAX_STALE_SECONDS:
+                if age >= _STATUS_FRESH_SECONDS and not _status_refreshing:
+                    _status_refreshing = True
+                    start_refresh = True
+            else:
+                body = None
+        if body is not None:
+            if start_refresh:
+                threading.Thread(target=_refresh_status_cache, daemon=True).start()
+            return Response(body, status=200, content_type=ctype,
+                            headers={"X-Status-Cache": "fresh" if age < _STATUS_FRESH_SECONDS else "stale"})
+
+    data = None
+    content_type = None
+    if request.method in ("POST", "PUT", "DELETE"):
+        data = request.get_data()
+        content_type = request.headers.get("Content-Type", "application/json")
+        _status_cache_clear()
+
+    try:
+        code, body, ctype = _forward(request.method, path, query, data, content_type)
+    except Exception as e:
+        print(f"[Dashboard] Sensor proxy failed: {request.method} /{path} -> {type(e).__name__}: {e}")
+        return jsonify({
+            "detail": f"Sensor API unreachable at {LIVE_API_URL}: {type(e).__name__}: {e}",
+            "url": f"{LIVE_API_URL}/{path}",
+        }), 502
+
+    if is_status and code == 200:
+        _status_cache_store(body, ctype)
+    if request.method in ("POST", "PUT", "DELETE"):
+        _status_cache_clear()
+    return Response(body, status=code, content_type=ctype)
+
+
+def _timed_get(path, timeout=30):
+    t0 = time.time()
+    try:
+        code, _body, _ctype = _forward("GET", path, timeout=timeout)
+        return {"http": code, "ok": code == 200, "ms": round((time.time() - t0) * 1000)}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "ms": round((time.time() - t0) * 1000)}
+
+
+@app.route("/api/sensor/ping")
+def api_sensor_ping():
+    """Open http://127.0.0.1:9000/api/sensor/ping to see whether the sensor
+    answers, how long its key endpoints take, and which routes it exposes."""
+    out = {
+        "sensor_url": LIVE_API_URL,
+        "health": _timed_get("health", timeout=5),
+        "live_status": _timed_get(_STATUS_PATH),
+        "routes": [],
+        "proxy_allows_prefixes": list(_PROXY_PREFIXES),
+        "proxy_allows_exact": sorted(_PROXY_EXACT_PATHS),
+    }
+    out["reachable"] = bool(out["health"].get("ok"))
+    if out["live_status"].get("ok") and out["live_status"]["ms"] > 2000:
+        out["warning"] = ("/api/live/status is slow (%d ms). The sensor is probably "
+                          "re-discovering network interfaces on every call; cache that "
+                          "in backend/main.py." % out["live_status"]["ms"])
+    if out["reachable"]:
+        try:
+            code, body, _ = _forward("GET", "openapi.json", timeout=5)
+            spec = json.loads(body.decode("utf-8", "replace"))
+            for p, methods in sorted((spec.get("paths") or {}).items()):
+                out["routes"].append({"path": p, "methods": sorted(m.upper() for m in methods)})
+        except Exception as e:
+            out["routes_error"] = f"{type(e).__name__}: {e}"
+    return jsonify(out)
 
 
 @app.route("/api/gemini/status")

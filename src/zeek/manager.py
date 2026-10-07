@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from pathlib import Path
+import json
 import os
 import shutil
 import signal
@@ -14,7 +15,10 @@ from src.zeek.installer import ZeekInstaller
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = REPO_ROOT / "data" / "processed" / "zeek" / "live"
+ZEEK_SOURCE_DIR = REPO_ROOT / ".third_party" / "zeek"
 LIVE_LOGS = ("conn.log", "dns.log", "ssl.log", "quic.log")
+INTERFACE_CACHE_TTL = 10.0
+STARTUP_GRACE = 2.0
 COMMON_ZEEK_PATHS = (
     "/opt/zeek/bin/zeek",
     "/opt/zeek/bin/zeek.exe",
@@ -38,6 +42,7 @@ class InterfaceInfo:
     ipv6: list[str] | None = None
     usable: bool = False
     reason: str | None = None
+    capture_name: str | None = None  # name actually passed to `zeek -i`
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -70,9 +75,14 @@ class ZeekManager:
         self.log_dir = Path(log_dir).resolve()
         self.auto_install = auto_install
         self.zeek_binary = zeek_binary or self._find_zeek()
-        self.process: subprocess.Popen[str] | None = None
+        self.process: subprocess.Popen | None = None
         self.interface: str | None = None
         self.install_message: str | None = None
+        self._iface_cache: tuple[float, list[dict]] | None = None
+        self._version_cache: str | None = None
+        self._stderr_file = None
+        # Outside log_dir so clear_logs() never deletes it.
+        self.stderr_path = self.log_dir.parent / "zeek-live-stderr.txt"
 
     @staticmethod
     def _find_zeek() -> str:
@@ -115,9 +125,34 @@ class ZeekManager:
             return False
 
         self.zeek_binary = self._find_zeek()
+        self._version_cache = None
         return self.is_installed()
 
+    # ------------------------------------------------------- script path
+
+    @staticmethod
+    def _zeek_env() -> dict[str, str]:
+        """Environment for the Zeek process.
+
+        A source-built Zeek on Windows can't find its base scripts because the
+        install step doesn't copy them. If the checked-out source tree is
+        present, point ZEEKPATH at it. A ZEEKPATH set by the user wins.
+        """
+        env = os.environ.copy()
+        if env.get("ZEEKPATH"):
+            return env
+
+        scripts = ZEEK_SOURCE_DIR / "scripts"
+        if not (scripts / "base" / "init-bare.zeek").is_file():
+            return env  # system install: Zeek knows its own paths
+
+        parts = [scripts, scripts / "policy", scripts / "site", ZEEK_SOURCE_DIR / "build" / "scripts"]
+        env["ZEEKPATH"] = os.pathsep.join(str(p) for p in parts if p.is_dir())
+        return env
+
     def version(self) -> str | None:
+        if self._version_cache:
+            return self._version_cache
         if not self.is_installed():
             return None
         try:
@@ -131,7 +166,8 @@ class ZeekManager:
         except (OSError, subprocess.SubprocessError):
             return None
         output = (result.stdout or result.stderr).strip()
-        return output or None
+        self._version_cache = output or None
+        return self._version_cache
 
     def list_interfaces(self) -> list[str]:
         """Return interface names visible to the operating system."""
@@ -150,31 +186,84 @@ class ZeekManager:
             return "ethernet"
         return "unknown"
 
-    def list_interface_details(self) -> list[dict]:
-        """Return capture-relevant metadata for every visible interface."""
-        names = self._raw_interface_names()
-        details: list[InterfaceInfo] = []
+    def list_interface_details(self, refresh: bool = False) -> list[dict]:
+        """Return capture-relevant metadata for every visible interface (cached)."""
+        now = time.monotonic()
+        cached = self._iface_cache
+        if not refresh and cached and now - cached[0] < INTERFACE_CACHE_TTL:
+            return [dict(item) for item in cached[1]]
 
         if os.name == "nt":
-            ps = self._windows_interface_details()
-            for name in names:
-                item = ps.get(name, {})
-                kind = self._interface_kind(
-                    name,
-                    wireless=("wi-fi" in str(item.get("description", "")).lower() or "wireless" in str(item.get("description", "")).lower()),
-                    virtual=("virtual" in str(item.get("description", "")).lower()),
-                )
-                up = str(item.get("status", "")).lower() in {"up", "connected"}
-                details.append(InterfaceInfo(
-                    name=name, display_name=item.get("description") or name, kind=kind,
-                    up=up, running=up, loopback=kind == "loopback",
-                    virtual=kind == "virtual", mac=item.get("mac"),
-                    usable=up and kind != "loopback",
-                    reason=None if up and kind != "loopback" else ("Loopback is not a normal live-capture adapter." if kind == "loopback" else "Interface is not up."),
-                ))
-            return [item.to_dict() for item in details]
+            details = self._windows_details()
+        else:
+            details = self._posix_details()
 
-        for name in names:
+        self._iface_cache = (now, details)
+        return [dict(item) for item in details]
+
+    # ------------------------------------------------------------ Windows
+
+    def _windows_adapters(self) -> list[dict]:
+        script = (
+            "Get-NetAdapter | Select-Object Name,InterfaceDescription,"
+            "@{n='Status';e={[string]$_.Status}},MacAddress,InterfaceGuid,"
+            "@{n='Virtual';e={[bool]$_.Virtual}} | ConvertTo-Json -Compress"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True, text=True, check=False, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        try:
+            payload = json.loads(result.stdout or "[]")
+        except (ValueError, TypeError):
+            return []
+        if isinstance(payload, dict):
+            payload = [payload]
+        return [item for item in payload if isinstance(item, dict) and item.get("Name")]
+
+    def _windows_details(self) -> list[dict]:
+        details: list[InterfaceInfo] = []
+        for item in self._windows_adapters():
+            name = str(item["Name"])
+            desc = str(item.get("InterfaceDescription") or "")
+            lower_desc = desc.lower()
+            up = str(item.get("Status") or "").lower() in {"up", "connected"}
+            wireless = any(t in lower_desc for t in ("wi-fi", "wireless", "802.11"))
+            virtual = bool(item.get("Virtual")) or any(
+                t in lower_desc
+                for t in ("virtual", "vmware", "hyper-v", "vbox", "wireguard", "tap-", "vethernet")
+            )
+            kind = self._interface_kind(name, wireless=wireless, virtual=virtual)
+            loopback = kind == "loopback"
+
+            guid = str(item.get("InterfaceGuid") or "").strip()
+            capture_name = f"\\Device\\NPF_{guid}" if guid else name
+
+            usable = up and not loopback
+            reason = None
+            if loopback:
+                reason = "Loopback is not a normal live-capture adapter."
+            elif not up:
+                reason = "Interface is not up."
+
+            details.append(InterfaceInfo(
+                name=name,
+                display_name=f"{name} - {desc}" if desc else name,
+                kind=kind, up=up, running=up, loopback=loopback, virtual=virtual,
+                mac=item.get("MacAddress"), usable=usable, reason=reason,
+                capture_name=capture_name,
+            ))
+        return [d.to_dict() for d in details]
+
+    # -------------------------------------------------------- Linux / macOS
+
+    def _posix_details(self) -> list[dict]:
+        details: list[InterfaceInfo] = []
+        for name in self._raw_interface_names():
             base = Path("/sys/class/net") / name
             operstate = ""
             mac = None
@@ -191,7 +280,7 @@ class ZeekManager:
             kind = self._interface_kind(name, wireless=wireless, virtual=virtual)
             loopback = kind == "loopback"
             up = operstate in {"up", "unknown"} or name in {"lo", "lo0"}
-            if not base.exists() and os.name != "nt":
+            if not base.exists():
                 up = self._ifconfig_interface_up(name)
             reason = None
             usable = up and not loopback
@@ -201,13 +290,14 @@ class ZeekManager:
                 reason = "Interface is not up."
             details.append(InterfaceInfo(
                 name=name, display_name=name, kind=kind, up=up, running=up,
-                loopback=loopback, virtual=virtual, mac=mac, usable=usable, reason=reason,
+                loopback=loopback, virtual=virtual, mac=mac, usable=usable,
+                reason=reason, capture_name=name,
             ))
-        return [item.to_dict() for item in details]
+        return [d.to_dict() for d in details]
 
     def _raw_interface_names(self) -> list[str]:
         interfaces_dir = Path("/sys/class/net")
-        if os.name != "nt" and interfaces_dir.exists():
+        if interfaces_dir.exists():
             return sorted(p.name for p in interfaces_dir.iterdir() if p.is_dir())
         try:
             names = [name for _, name in socket.if_nameindex()]
@@ -215,16 +305,6 @@ class ZeekManager:
                 return sorted(dict.fromkeys(names))
         except (AttributeError, OSError):
             pass
-        if os.name == "nt":
-            try:
-                result = subprocess.run(
-                    ["powershell", "-NoProfile", "-Command",
-                     "(Get-NetAdapter | Where-Object {$_.Status -ne 'Disabled'}).Name"],
-                    capture_output=True, text=True, check=False, timeout=10,
-                )
-            except (OSError, subprocess.SubprocessError):
-                return []
-            return sorted(dict.fromkeys(line.strip() for line in result.stdout.splitlines() if line.strip()))
         try:
             result = subprocess.run(["ip", "-o", "link", "show"], capture_output=True, text=True, check=False, timeout=10)
         except (OSError, subprocess.SubprocessError):
@@ -249,34 +329,17 @@ class ZeekManager:
         output = result.stdout.lower()
         return result.returncode == 0 and ("status: active" in output or " flags=" in output and "<up" in output)
 
-    def _windows_interface_details(self) -> dict[str, dict]:
-        try:
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,MacAddress | ConvertTo-Json -Compress"],
-                capture_output=True, text=True, check=False, timeout=10,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return {}
-        try:
-            import json
-            payload = json.loads(result.stdout or "[]")
-        except (ValueError, TypeError):
-            return {}
-        if isinstance(payload, dict):
-            payload = [payload]
-        return {
-            str(item.get("Name")): {
-                "description": item.get("InterfaceDescription"),
-                "status": item.get("Status"),
-                "mac": item.get("MacAddress"),
-            }
-            for item in payload if item.get("Name")
-        }
+    # ----------------------------------------------------------- validation
 
-    def validate_interface(self, interface: str) -> dict[str, object]:
+    def validate_interface(self, interface: str, refresh: bool = False) -> dict[str, object]:
         """Validate that an interface is suitable for normal live capture."""
-        details = next((item for item in self.list_interface_details() if item["name"] == interface), None)
+        details = next(
+            (
+                item for item in self.list_interface_details(refresh=refresh)
+                if item["name"] == interface or item.get("capture_name") == interface
+            ),
+            None,
+        )
         if details is None:
             return {"valid": False, "interface": interface, "reason": f"Network interface not found: {interface}"}
         if details.get("loopback"):
@@ -303,9 +366,10 @@ class ZeekManager:
 
     def status(self) -> ZeekStatus:
         running = self.process is not None and self.process.poll() is None
-        error = self.install_message if not self.is_installed() else None
+        installed = self.is_installed()
+        error = self.install_message if not installed else None
         return ZeekStatus(
-            installed=self.is_installed(),
+            installed=installed,
             version=self.version(),
             running=running,
             interface=self.interface,
@@ -315,32 +379,68 @@ class ZeekManager:
             error=error,
         )
 
+    # ------------------------------------------------------- stderr capture
+
+    def _close_stderr_file(self) -> None:
+        if self._stderr_file is not None:
+            try:
+                self._stderr_file.close()
+            except OSError:
+                pass
+            self._stderr_file = None
+
+    def _read_stderr(self) -> str:
+        self._close_stderr_file()
+        try:
+            text = self.stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return ""
+        return text[-2000:]  # keep the tail, that's where the error is
+
+    def _exit_error(self) -> str:
+        """Build a readable error for a Zeek process that already exited."""
+        code = self.process.returncode if self.process is not None else None
+        detail = self._read_stderr()
+        if not detail:
+            detail = f"no output (exit code {code}). Run Zeek manually to see why: {self.zeek_binary} -i <iface> -C local"
+        return self._diagnose_start_error(detail)
+
     def _diagnose_start_error(self, detail: str) -> str:
         detail = (detail or "").strip()
         lower = detail.lower()
+        iface = self.interface or "selected interface"
 
         if "permission" in lower or "operation not permitted" in lower or "access denied" in lower:
             return (
-                f"Zeek could not capture interface '{self.interface or 'selected interface'}': "
+                f"Zeek could not capture interface '{iface}': "
                 f"{detail or 'permission denied'}. "
                 "Run the launcher with the required packet-capture privileges."
             )
 
+        if any(t in lower for t in ("can't find", "cannot find", "unable to find", "local.zeek", "base/init", "zeekpath")):
+            return (
+                f"Zeek cannot find its script files: {detail}. "
+                f"Expected the Zeek source scripts at {ZEEK_SOURCE_DIR / 'scripts'} "
+                "(or set the ZEEKPATH environment variable to your Zeek scripts folder)."
+            )
+
         if os.name == "nt" and any(token in lower for token in ("npcap", "wpcap", "pcap", "winpcap")):
             return (
-                f"Zeek could not open Windows capture interface '{self.interface or 'selected interface'}': "
+                f"Zeek could not open Windows capture interface '{iface}': "
                 f"{detail}. Verify that Npcap is installed and that this Zeek build was linked "
                 "against the Npcap SDK."
             )
 
         if any(token in lower for token in ("interface", "device", "no such", "not found")):
             return (
-                f"Zeek could not open interface '{self.interface or 'selected interface'}': "
+                f"Zeek could not open interface '{iface}': "
                 f"{detail or 'device was not found'}. "
                 "Refresh the interface list and choose an active adapter."
             )
 
-        return f"Zeek failed to start on '{self.interface or 'selected interface'}': {detail or 'unknown error'}"
+        return f"Zeek failed on '{iface}': {detail or 'unknown error'}"
+
+    # --------------------------------------------------------------- start
 
     def start(self, interface: str, startup_timeout: float = 5.0) -> ZeekStatus:
         if not self.ensure_installed():
@@ -348,48 +448,67 @@ class ZeekManager:
                 "Zeek is not installed and automatic installation failed: "
                 f"{self.install_message or 'unknown installation error'}"
             )
-        validation = self.validate_interface(interface)
+        validation = self.validate_interface(interface, refresh=True)
         if not validation["valid"]:
             raise ValueError(str(validation["reason"]))
         if self.process is not None and self.process.poll() is None:
             raise RuntimeError("Zeek is already running.")
+
+        details = validation.get("details") or {}
+        capture_name = details.get("capture_name") or interface
 
         self.clear_logs()
 
         command = [
             self.zeek_binary,
             "-i",
-            interface,
+            capture_name,
             "-C",
             "local",
             "Log::default_rotation_interval=0sec",
         ]
 
+        env = self._zeek_env()
+
+        # stderr goes to a file: survives process exit, can't fill a pipe and block.
+        self._close_stderr_file()
+        self.stderr_path.parent.mkdir(parents=True, exist_ok=True)
+        self._stderr_file = open(self.stderr_path, "w", encoding="utf-8", errors="replace")
+        self._stderr_file.write(f"# command: {' '.join(command)}\n")
+        self._stderr_file.write(f"# ZEEKPATH: {env.get('ZEEKPATH', '(default)')}\n")
+        self._stderr_file.flush()
+
         popen_kwargs = {
             "cwd": self.log_dir,
+            "env": env,
             "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.PIPE,
+            "stderr": self._stderr_file,
             "text": True,
         }
         if os.name == "nt":
             popen_kwargs["creationflags"] = getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-            )
+            ) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
         else:
             popen_kwargs["start_new_session"] = True
 
-        self.process = subprocess.Popen(command, **popen_kwargs)
+        try:
+            self.process = subprocess.Popen(command, **popen_kwargs)
+        except OSError as exc:
+            self._close_stderr_file()
+            self.process = None
+            raise RuntimeError(f"Could not launch Zeek ({self.zeek_binary}): {exc}") from exc
         self.interface = interface
 
-        deadline = time.monotonic() + startup_timeout
+        # Zeek must stay alive for the grace period; a bad script path or
+        # device usually kills it within a second.
+        deadline = time.monotonic() + min(startup_timeout, STARTUP_GRACE)
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                error = self.process.stderr.read().strip() if self.process.stderr else ""
+                message = self._exit_error()
                 self.process = None
                 self.interface = None
-                raise RuntimeError(self._diagnose_start_error(error))
-            if self.log_dir.exists():
-                break
+                raise RuntimeError(message)
             time.sleep(0.1)
 
         return self.status()
@@ -415,7 +534,7 @@ class ZeekManager:
             # authoritative startup check; actual log records can arrive later.
             log_ready = self.wait_for_log("conn.log", timeout=log_timeout)
             if self.process is None or self.process.poll() is not None:
-                raise RuntimeError("Zeek exited during live-capture verification.")
+                raise RuntimeError(self._exit_error())
             return {
                 "ready": True,
                 "interface": interface,
@@ -448,6 +567,7 @@ class ZeekManager:
     def stop(self, timeout: float = 5.0) -> ZeekStatus:
         if self.process is None:
             self.interface = None
+            self._close_stderr_file()
             return self.status()
 
         if self.process.poll() is None:
@@ -463,6 +583,7 @@ class ZeekManager:
 
         self.process = None
         self.interface = None
+        self._close_stderr_file()
         self.clear_logs()
         return self.status()
 
@@ -482,12 +603,14 @@ def main() -> None:
     print(f"Zeek binary    : {manager.zeek_binary}")
     print(f"Zeek version   : {status.version or 'N/A'}")
     print(f"Log directory  : {status.log_dir}")
+    print(f"ZEEKPATH       : {manager._zeek_env().get('ZEEKPATH', '(default)')}")
 
     print("\nNetwork interfaces:")
-    interfaces = manager.list_interfaces()
-    if interfaces:
-        for index, interface in enumerate(interfaces, start=1):
-            print(f"  {index}. {interface}")
+    details = manager.list_interface_details(refresh=True)
+    if details:
+        for index, item in enumerate(details, start=1):
+            flag = "UP " if item["up"] else "down"
+            print(f"  {index}. [{flag}] {item['name']}  ->  {item.get('capture_name')}")
     else:
         print("  No interfaces detected")
 

@@ -1400,7 +1400,7 @@
   <script>
     /* ============================================================
        BACKEND CONTRACT — see dashboard.py
-    
+
        GET  /api/stats                     -> { flows_analyzed, flows_analyzed_window,
                                                   flagged, flagged_sources, avg_confidence, model }
        GET  /api/groups                    -> [{ group_id, src_ip, host, request_count,
@@ -1413,16 +1413,17 @@
        GET  /api/groups/<id>/chat/history  -> [{ sender: "user"|"bot", lead, bullets? }, ...]
        POST /api/groups/<id>/chat          body: { message }
                                             -> { lead, bullets? }
-    
+
        Sensor control (Start / Stop / status / response) goes through the Flask
        proxy at /live-api/api/live/*  ->  FastAPI sensor. Live data only.
+       Diagnostics: /api/sensor/ping on the Flask dashboard.
        ============================================================ */
 
     const LIVE_API = {{ live_api| tojson }};   // direct sensor URL, used only for the WebSocket
     const LIVE_PROXY = '/live-api';           // same-origin proxy for every REST call
     let liveSocket = null;
     let liveThreats = 0;
-    let liveModelLabel = 'Offline';
+    let liveModelLabel = 'Stopped';
     let latestThreatScore = 0;
     let latestMlPrediction = null;
     let latestThreatSource = null;
@@ -1476,12 +1477,15 @@
       btn.textContent = running ? '■ Stop' : '▶ Start';
       btn.classList.toggle('running', running);
       btn.disabled = !apiOk || toggleBusy;
-      btn.title = apiOk ? '' : 'Sensor API unreachable at ' + LIVE_API + ' — start the FastAPI backend first.';
+      btn.title = apiOk ? '' : 'Sensor API unreachable at ' + LIVE_API
+        + (lastStatusError ? ' (' + lastStatusError + ')' : '')
+        + ' — start the FastAPI backend first.';
     }
-    function setStatus(text, state) {
+    function setStatus(text, state, tip) {
       const st = document.getElementById('liveStatus');
       if (!st) return;
       st.textContent = text;
+      st.title = tip || '';
       st.classList.toggle('on', state === 'on');
       st.classList.toggle('offline', state === 'error');
     }
@@ -1601,19 +1605,34 @@
     /* --- interface dropdown: rebuilt only when the list actually changes,
            so it never collapses under the user's cursor --- */
     let interfaceSignature = '';
+    function interfaceDetailsFrom(status) {
+      if (!status) return [];
+      if (Array.isArray(status.interface_details) && status.interface_details.length) {
+        return status.interface_details;
+      }
+      // Fallback for a sensor that only reports plain interface names.
+      const plain = status.interfaces || status.available_interfaces || [];
+      if (Array.isArray(plain)) {
+        return plain.map(x => (typeof x === 'string')
+          ? { name: x, display_name: x, kind: 'interface', usable: true }
+          : x).filter(x => x && x.name);
+      }
+      return [];
+    }
     function populateInterfaces(status) {
-      const details = (status && status.interface_details) || [];
+      const details = interfaceDetailsFrom(status);
       const sig = details.map(i => i.name + ':' + (i.usable ? 1 : 0)).join('|');
       if (sig === interfaceSignature) return;
       interfaceSignature = sig;
       const select = document.getElementById('interfaceSelect');
       const current = select.value;
       [...select.options].slice(1).forEach(o => o.remove());
+      select.options[0].textContent = details.length ? 'Interface…' : 'No interfaces reported';
       details.forEach(i => {
         const o = document.createElement('option');
         o.value = i.name;
         const state = i.usable ? 'ready' : (i.reason || 'unavailable');
-        o.textContent = (i.display_name || i.name) + ' (' + i.kind + ', ' + state + ')';
+        o.textContent = (i.display_name || i.name) + ' (' + (i.kind || 'interface') + ', ' + state + ')';
         o.disabled = !i.usable;
         select.appendChild(o);
       });
@@ -1624,15 +1643,60 @@
       }
     }
 
-    async function loadLiveStatus() {
+    /* --- sensor status polling ---
+       Hardened: never overlaps itself, times out instead of hanging, tolerates
+       a few transient failures before declaring the sensor offline, and shows
+       the real reason (HTTP code / detail / timeout) instead of a bare "offline". */
+    const STATUS_TIMEOUT_MS = 25000;
+    const STATUS_FAILURES_BEFORE_OFFLINE = 3;
+    let statusPromise = null;
+    let statusFailures = 0;
+    let statusEverOk = false;
+    let lastStatusError = '';
+
+    async function fetchStatusOnce() {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), STATUS_TIMEOUT_MS);
       try {
-        const res = await fetch(LIVE_PROXY + '/api/live/status', { cache: 'no-store' });
-        if (!res.ok) throw new Error('Live status request failed (' + res.status + ')');
-        const s = await res.json();
+        const res = await fetch(LIVE_PROXY + '/api/live/status', { cache: 'no-store', signal: ctrl.signal });
+        if (!res.ok) {
+          let detail = '';
+          try {
+            const j = await res.json();
+            detail = j.detail || j.error || '';
+            if (typeof detail !== 'string') detail = JSON.stringify(detail);
+          } catch (_) { }
+          throw new Error('HTTP ' + res.status + (detail ? ': ' + detail.slice(0, 180) : ''));
+        }
+        return await res.json();
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw new Error('timed out after ' + (STATUS_TIMEOUT_MS / 1000) + 's');
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    function loadLiveStatus() {
+      if (statusPromise) return statusPromise;
+      statusPromise = doLoadLiveStatus().finally(() => { statusPromise = null; });
+      return statusPromise;
+    }
+
+    async function doLoadLiveStatus() {
+      if (!statusEverOk) {
+        document.getElementById('modelBadge').textContent = 'Detecting network interfaces…';
+        setStatus('Detecting interfaces…', '', 'The first status check can take 15+ seconds.');
+      }
+      try {
+        const s = await fetchStatusOnce();
+        statusFailures = 0;
+        statusEverOk = true;
+        lastStatusError = '';
         const running = !!s.running;
 
         document.querySelectorAll('.sensor-control').forEach(el => el.hidden = false);
-        setStatus(running ? 'Live' : 'Offline', running ? 'on' : '');
+        setStatus(running ? 'Live' : 'Stopped', running ? 'on' : '');
         setToggle(running, true);
         const select = document.getElementById('interfaceSelect');
         select.disabled = running;
@@ -1642,7 +1706,7 @@
 
         const loaded = (s.models && s.models.loaded_models) || [];
         // Only take the sensor's score when it actually reports one — otherwise the
-        // 2s poll would wipe the headline threat score back to 0.
+        // poll would wipe the headline threat score back to 0.
         const latest = s.latest_ml;
         if (latest && latest.score != null) {
           latestThreatScore = Number(latest.score || 0);
@@ -1664,13 +1728,24 @@
         }
         return s;
       } catch (e) {
-        // Flask dashboard stays open even if the FastAPI sensor is down.
+        statusFailures++;
+        lastStatusError = (e && e.message) ? e.message : String(e);
+        console.warn('[Dashboard] Sensor status failed (' + statusFailures + '): ' + lastStatusError);
+
+        // A single slow or failed poll must not flip a working sensor to
+        // "offline" — keep the last good UI until failures repeat.
+        if (statusEverOk && statusFailures < STATUS_FAILURES_BEFORE_OFFLINE) {
+          return null;
+        }
+
+        // The Flask dashboard stays open even if the FastAPI sensor is down.
         // The toggle stays visible but disabled; it re-enables automatically
         // as soon as the sensor API answers again.
         document.querySelectorAll('.sensor-control').forEach(el => el.hidden = false);
-        setStatus('Sensor API offline', 'error');
+        setStatus('Sensor API offline', 'error', lastStatusError);
         setToggle(false, false);
         document.getElementById('modelBadge').textContent = 'Sensor API offline';
+        document.getElementById('modelBadge').title = lastStatusError;
         if (liveSocket) {
           try { liveSocket.close(); } catch (err) { }
           liveSocket = null;
@@ -1684,7 +1759,7 @@
       if (liveStatusPollTimer) clearInterval(liveStatusPollTimer);
       // Keep Live/Offline/API offline synchronized even when the user does
       // not interact with the Start/Stop button.
-      liveStatusPollTimer = setInterval(loadLiveStatus, 2000);
+      liveStatusPollTimer = setInterval(loadLiveStatus, 4000);
     }
 
     function connectLiveSocket() {
@@ -1717,7 +1792,7 @@
           }
           if (data.event === 'connected' && data.live) {
             const running = !!data.live.running;
-            setStatus(running ? 'Live' : 'Offline', running ? 'on' : '');
+            setStatus(running ? 'Live' : 'Stopped', running ? 'on' : '');
             setToggle(running, true);
           }
         } catch (e) { }
