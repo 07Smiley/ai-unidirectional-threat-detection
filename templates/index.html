@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Shakalaka — Threat Detection</title>
   <style>
     /* ===== Shakalaka: black canvas, white type, red only for threats ===== */
@@ -21,6 +21,7 @@
       --hover-text: #000;
       --user-bg: #f0f0fa;
       --user-text: #000;
+      --navh: 0px;
       --font: "D-DIN", "DIN Alternate", "Arial Narrow", Arial, Verdana, sans-serif;
       --font-display: "D-DIN-Bold", "D-DIN", "DIN Condensed", "Arial Narrow", Arial, Verdana, sans-serif;
       font-family: var(--font);
@@ -33,13 +34,17 @@
     }
 
     html {
-      color-scheme: dark
+      color-scheme: dark;
+      height: 100%;
+      overflow: hidden
     }
 
     body {
       background: var(--bg);
       color: var(--text);
-      min-height: 100vh;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
       line-height: 1.5;
       letter-spacing: .2px;
       font-size: 14px
@@ -99,7 +104,9 @@
       font-size: 12px;
       color: var(--muted);
       margin-top: 4px;
-      white-space: nowrap
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis
     }
 
     .live-controls {
@@ -217,6 +224,26 @@
       margin-top: 2px
     }
 
+    /* status dot in the header (mobile only) so Live/Stopped/Offline is always visible */
+    .head-dot {
+      display: none;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0
+    }
+
+    .head-dot.on {
+      background: var(--text);
+      box-shadow: 0 0 0 4px rgba(255, 255, 255, .14)
+    }
+
+    .head-dot.offline {
+      background: var(--red);
+      box-shadow: 0 0 0 4px rgba(255, 77, 77, .18)
+    }
+
     /* --- hamburger (shown on small screens only) --- */
     .hamburger {
       display: none;
@@ -277,29 +304,107 @@
       transform: rotate(-45deg)
     }
 
-    /* --- page shell --- */
-    .shell {
-      padding: 20px 28px 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      height: calc(100vh - 64px);
-      min-height: 640px
+    /* --- bottom nav (mobile only): switches Sources / Logs / Analysis --- */
+    .mobile-nav {
+      display: none;
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 30;
+      height: var(--navh);
+      padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+      gap: 8px;
+      background: rgba(0, 0, 0, .94);
+      border-top: 1px solid var(--line)
     }
 
-    /* --- summary strip --- */
+    @supports((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))) {
+      .mobile-nav {
+        background: rgba(0, 0, 0, .78);
+        -webkit-backdrop-filter: blur(18px) saturate(160%);
+        backdrop-filter: blur(18px) saturate(160%)
+      }
+    }
+
+    .mnav-btn {
+      flex: 1;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      border: 1px solid transparent;
+      border-radius: 14px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .4px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent
+    }
+
+    .mnav-btn svg {
+      width: 20px;
+      height: 20px
+    }
+
+    .mnav-btn[aria-selected="true"] {
+      background: var(--hover-bg);
+      color: var(--hover-text)
+    }
+
+    .mnav-badge {
+      position: absolute;
+      top: 3px;
+      left: calc(50% + 6px);
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      background: var(--red);
+      color: #000;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 18px;
+      text-align: center
+    }
+
+    .mnav-badge[hidden] {
+      display: none
+    }
+
+    /* --- page shell: locked to the viewport, the page itself never scrolls --- */
+    .shell {
+      padding: 14px 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: calc(100vh - 64px);
+      height: calc(100dvh - 64px);
+      min-height: 0;
+      overflow: hidden
+    }
+
+    /* --- summary strip (compact: value + sub on one line) --- */
     .stats {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
+      gap: 12px;
       flex-shrink: 0
+    }
+
+    body.focus .stats {
+      display: none
     }
 
     .stat {
       background: var(--bg2);
       border: 1px solid var(--line);
       border-radius: 12px;
-      padding: 14px 20px;
+      padding: 10px 16px;
       display: flex;
       flex-direction: column;
       min-width: 0
@@ -310,23 +415,38 @@
     }
 
     .stat .label {
-      font-size: 12px;
-      color: var(--muted)
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis
+    }
+
+    .stat .label .ls {
+      display: none
+    }
+
+    .stat .vs {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      min-width: 0
     }
 
     .stat .value {
       font-family: var(--font-display);
-      font-size: 30px;
-      line-height: 1.1;
+      font-size: 24px;
+      line-height: 1.15;
       font-weight: 700;
       letter-spacing: .6px;
-      margin-top: 2px
+      flex-shrink: 0
     }
 
     .stat .sub {
-      font-size: 12px;
+      font-size: 11px;
       color: var(--muted);
-      margin-top: 2px;
+      flex: 1;
+      min-width: 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis
@@ -352,7 +472,7 @@
       gap: 18px;
       border: 1px solid var(--red);
       border-radius: 12px;
-      padding: 14px 20px;
+      padding: 10px 16px;
       flex-shrink: 0
     }
 
@@ -496,13 +616,16 @@
       cursor: not-allowed
     }
 
-    /* --- workspace: sources | (logs / analysis tabs) --- */
+    /* --- workspace: sources | (logs / analysis tabs) ---
+       The single grid row is pinned to the available height (minmax(0,1fr)),
+       so panels can never grow with their content — the inner lists scroll instead. */
     .workspace {
       flex: 1;
       min-height: 0;
       display: grid;
       grid-template-columns: 340px minmax(0, 1fr);
-      gap: 16px
+      grid-template-rows: minmax(0, 1fr);
+      gap: 12px
     }
 
     .panel {
@@ -510,6 +633,7 @@
       flex-direction: column;
       min-height: 0;
       min-width: 0;
+      height: 100%;
       background: var(--bg2);
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -517,7 +641,7 @@
     }
 
     .panel-head {
-      height: 60px;
+      height: 56px;
       flex-shrink: 0;
       display: flex;
       align-items: center;
@@ -543,6 +667,52 @@
       max-width: 50%
     }
 
+    /* right side of the detail panel header: gemini status | selected id | focus button */
+    .head-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      max-width: 65%
+    }
+
+    .head-right .count {
+      max-width: none;
+      min-width: 0
+    }
+
+    .head-right .gemini-status {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0
+    }
+
+    .focus-btn {
+      height: 32px;
+      padding: 0 14px;
+      border-radius: 32px;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0
+    }
+
+    .focus-btn:hover {
+      color: var(--text);
+      border-color: var(--text)
+    }
+
+    .focus-btn[aria-pressed="true"] {
+      background: var(--hover-bg);
+      color: var(--hover-text);
+      border-color: var(--hover-bg)
+    }
+
     .empty {
       padding: 48px 24px;
       text-align: center;
@@ -558,7 +728,7 @@
     }
 
     .tab {
-      height: 36px;
+      height: 34px;
       padding: 0 18px;
       border-radius: 32px;
       border: 1px solid var(--line);
@@ -595,6 +765,7 @@
     /* --- 1. flagged sources --- */
     .source-list {
       flex: 1;
+      min-height: 0;
       overflow-y: auto
     }
 
@@ -602,7 +773,7 @@
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 16px 20px;
+      padding: 14px 20px;
       border-bottom: 1px solid var(--line);
       border-left: 3px solid transparent;
       cursor: pointer
@@ -670,10 +841,16 @@
       margin-top: 2px
     }
 
-    /* --- 2a. logs tab: summary + all logs of the selected source --- */
+    /* --- 2a. logs tab: ONE scroll area holding the source summary + all logs.
+           The summary scrolls away so the log table gets the full height. --- */
+    .log-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow: auto
+    }
+
     .source-detail {
-      flex-shrink: 0;
-      padding: 20px 24px;
+      padding: 14px 24px;
       border-bottom: 1px solid var(--line)
     }
 
@@ -690,7 +867,7 @@
 
     .detail-title .ip {
       font-family: var(--font-display);
-      font-size: 26px;
+      font-size: 22px;
       font-weight: 700;
       letter-spacing: .6px;
       line-height: 1.2;
@@ -698,7 +875,7 @@
     }
 
     .detail-title .secondary {
-      font-size: 13px;
+      font-size: 12px;
       color: var(--muted);
       margin-top: 2px
     }
@@ -709,34 +886,28 @@
       color: var(--red);
       border: 1px solid var(--red);
       border-radius: 32px;
-      padding: 6px 14px;
+      padding: 5px 14px;
       white-space: nowrap
     }
 
     .detail-grid {
       display: flex;
       flex-wrap: wrap;
-      gap: 12px 36px;
-      margin-top: 16px
+      gap: 8px 32px;
+      margin-top: 10px
     }
 
     .detail-metric .k {
-      font-size: 12px;
+      font-size: 11px;
       color: var(--muted)
     }
 
     .detail-metric .v {
       font-family: var(--font-display);
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 700;
       letter-spacing: .4px;
-      margin-top: 2px
-    }
-
-    #logBody {
-      flex: 1;
-      min-height: 0;
-      overflow: auto
+      margin-top: 1px
     }
 
     .log-table-head,
@@ -760,7 +931,7 @@
     }
 
     .log-row {
-      min-height: 48px;
+      min-height: 46px;
       border-bottom: 1px solid var(--line);
       font-size: 13px
     }
@@ -821,11 +992,6 @@
     }
 
     /* --- 2b. analysis tab: gemini chat, ask box at the bottom --- */
-    .gemini-bar {
-      flex-shrink: 0;
-      padding: 12px 28px 0
-    }
-
     .gemini-status {
       font-size: 12px;
       color: var(--muted)
@@ -839,10 +1005,10 @@
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      padding: 20px 28px 24px;
+      padding: 18px 28px 20px;
       display: flex;
       flex-direction: column;
-      gap: 18px
+      gap: 16px
     }
 
     .chat-row {
@@ -854,7 +1020,7 @@
     }
 
     .chat-row .bubble {
-      max-width: min(760px, 90%);
+      max-width: min(900px, 92%);
       font-size: 14px;
       line-height: 1.7;
       padding: 14px 18px;
@@ -970,24 +1136,32 @@
     .chat-foot {
       flex-shrink: 0;
       border-top: 1px solid var(--line);
-      padding: 16px 28px 20px;
+      padding: 12px 28px 14px;
       display: flex;
       flex-direction: column;
-      gap: 12px
+      gap: 10px
     }
 
     .quick-qs {
       display: flex;
-      flex-wrap: wrap;
-      gap: 8px
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      gap: 8px;
+      scrollbar-width: none
+    }
+
+    .quick-qs::-webkit-scrollbar {
+      display: none
     }
 
     .quick-q {
+      flex-shrink: 0;
+      white-space: nowrap;
       background: transparent;
       color: var(--soft);
       border: 1px solid var(--line);
       border-radius: 32px;
-      padding: 7px 14px;
+      padding: 6px 14px;
       font-size: 12px;
       cursor: pointer
     }
@@ -1014,7 +1188,7 @@
       border: 1px solid var(--line);
       border-radius: 32px;
       padding: 0 22px;
-      height: 48px;
+      height: 44px;
       color: var(--text);
       outline: none;
       font-size: 14px
@@ -1029,7 +1203,7 @@
     }
 
     .chat-send {
-      height: 48px;
+      height: 44px;
       background: transparent;
       color: var(--text);
       border: 1px solid var(--text);
@@ -1076,38 +1250,101 @@
       }
     }
 
+    /* ===== Mobile / tablet: one view at a time, switched from the bottom nav ===== */
     @media(max-width:1000px) {
+      :root {
+        --navh: calc(64px + env(safe-area-inset-bottom, 0px))
+      }
+
       .shell {
-        height: auto;
-        min-height: 0;
-        padding: 16px
+        padding: 12px 14px 14px;
+        gap: 10px;
+        height: calc(100vh - 64px - var(--navh));
+        height: calc(100dvh - 64px - var(--navh))
       }
 
+      .mobile-nav {
+        display: flex
+      }
+
+      /* stat cards only on the Sources view — Logs and Analysis get the full height */
+      body[data-mview="logs"] .stats,
+      body[data-mview="analysis"] .stats {
+        display: none
+      }
+
+      /* focus toggle is desktop-only (mobile does this automatically) */
+      .focus-btn {
+        display: none
+      }
+
+      /* single column, single panel */
       .workspace {
-        grid-template-columns: 1fr
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr)
       }
 
-      .source-list {
-        max-height: 320px
+      body[data-mview="sources"] .detail-panel {
+        display: none
       }
 
-      #logBody {
-        max-height: 480px
+      body[data-mview="logs"] .flagged-panel,
+      body[data-mview="analysis"] .flagged-panel {
+        display: none
       }
 
-      #paneAnalysis {
-        height: 600px;
-        flex: none
+      /* the bottom nav replaces the in-panel tabs */
+      .detail-panel .tabs {
+        display: none
       }
 
-      /* header: brand | clock | hamburger, controls drop down as glass panel */
+      .panel-head {
+        height: 48px;
+        padding: 0 16px
+      }
+
+      .panel-head .count {
+        max-width: 60%
+      }
+
+      .detail-panel .panel-head {
+        justify-content: flex-start
+      }
+
+      .detail-panel .head-right {
+        width: 100%;
+        max-width: none;
+        justify-content: space-between
+      }
+
+      .detail-panel .head-right .count {
+        flex: 1;
+        font-family: var(--font-display);
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: .6px;
+        color: var(--text)
+      }
+
+      .detail-panel .head-right .gemini-status {
+        flex-shrink: 1;
+        max-width: 55%
+      }
+
+      /* header: brand | status dot | clock | hamburger; controls drop down as glass panel */
       header {
         padding: 0 16px;
         gap: 12px
       }
 
-      .live-clock {
+      .head-dot {
+        display: block;
         margin-left: auto
+      }
+
+      .live-clock {
+        margin-left: 0;
+        min-width: 0
       }
 
       .hamburger {
@@ -1179,7 +1416,7 @@
       .live-btn.toggle {
         width: 100%;
         max-width: none;
-        height: 44px
+        height: 46px
       }
 
       .live-select {
@@ -1209,52 +1446,188 @@
       }
     }
 
+    /* ===== Phones ===== */
     @media(max-width:760px) {
+
+      /* compact, evenly spaced summary strip with short labels */
       .stats {
-        grid-template-columns: 1fr
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px
+      }
+
+      .stat {
+        padding: 8px 12px;
+        border-radius: 10px
+      }
+
+      .stat .label .lf {
+        display: none
+      }
+
+      .stat .label .ls {
+        display: inline
+      }
+
+      .stat .label {
+        font-size: 11px
       }
 
       .stat .value {
-        font-size: 26px
+        font-size: 22px
+      }
+
+      .stat .sub {
+        display: none
+      }
+
+      /* threat response: stacked, full-width buttons */
+      .response-panel {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        padding: 10px 14px
+      }
+
+      .response-panel>div:last-child {
+        width: 100%
+      }
+
+      .response-panel>div:last-child .live-btn {
+        flex: 1
+      }
+
+      .threat-modal {
+        padding: 24px
       }
 
       .threat-modal .score {
         font-size: 56px
       }
 
+      .threat-modal .actions {
+        flex-direction: column-reverse
+      }
+
+      .threat-modal button {
+        width: 100%
+      }
+
+      /* flagged sources: comfortable tap targets */
+      .source-row {
+        padding: 14px 16px
+      }
+
+      .source-row .primary {
+        font-size: 15px
+      }
+
+      /* selected source summary: title row + tidy 2-column metrics */
+      .source-detail {
+        padding: 12px 16px
+      }
+
+      .detail-title .ip {
+        font-size: 19px
+      }
+
+      .detail-title .verdict {
+        font-size: 12px;
+        padding: 5px 10px
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 16px;
+        margin-top: 10px
+      }
+
+      .detail-metric .v {
+        font-size: 14px;
+        overflow-wrap: anywhere
+      }
+
+      /* logs: each flow becomes a small readable card
+         row 1: destination + verdict   row 2: time · protocol · score */
       .log-table-head {
         display: none
       }
 
       .log-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px 14px;
-        padding: 12px 20px
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        grid-template-areas: "dest dest lbl" "time proto score";
+        gap: 6px 12px;
+        padding: 12px 16px;
+        min-height: 0
       }
 
-      .response-panel {
-        flex-direction: column;
-        align-items: flex-start
+      .log-row .dest {
+        grid-area: dest;
+        font-size: 14px;
+        color: var(--text)
       }
 
-      .panel-head .count {
-        display: none
+      .log-row .lbl {
+        grid-area: lbl
       }
 
-      .chat-log,
-      .chat-foot,
-      .gemini-bar {
-        padding-left: 16px;
-        padding-right: 16px
+      .log-row .time {
+        grid-area: time;
+        font-size: 12px
+      }
+
+      .log-row .proto {
+        grid-area: proto;
+        font-size: 12px;
+        text-align: right
+      }
+
+      .log-row .flow-score {
+        grid-area: score;
+        font-size: 12px;
+        text-align: right
+      }
+
+      /* analysis chat */
+      .chat-log {
+        padding: 12px 16px 14px;
+        gap: 12px
+      }
+
+      .chat-row .bubble {
+        max-width: 94%;
+        padding: 12px 14px
+      }
+
+      .chat-foot {
+        padding: 10px 16px 12px;
+        gap: 8px
+      }
+
+      .quick-qs {
+        margin: 0 -16px;
+        padding: 0 16px
+      }
+
+      .quick-q {
+        padding: 8px 14px
+      }
+
+      .chat-input,
+      .chat-send {
+        height: 42px
+      }
+
+      .chat-input {
+        padding: 0 18px
+      }
+
+      .chat-send {
+        padding: 0 20px
       }
     }
 
     @media(max-width:480px) {
-      .shell {
-        padding: 12px
-      }
-
       .brand svg {
         width: 26px;
         height: 26px
@@ -1265,35 +1638,27 @@
       }
 
       .model-badge {
-        font-size: 11px
-      }
-
-      .live-clock {
-        min-width: 0
+        font-size: 11px;
+        max-width: 140px
       }
 
       .live-clock .date {
         display: none
       }
 
+      .live-clock .time {
+        font-size: 15px
+      }
+
       .live-controls {
         left: 12px;
         right: 12px
-      }
-
-      .detail-title .ip {
-        font-size: 20px
-      }
-
-      .detail-title .verdict {
-        font-size: 12px;
-        padding: 5px 10px
       }
     }
   </style>
 </head>
 
-<body>
+<body data-mview="sources">
 
   <header>
     <div class="brand">
@@ -1313,6 +1678,7 @@
       <button id="liveToggle" class="live-btn toggle sensor-control" type="button" disabled>▶ Start</button>
       <span class="live-status sensor-control" id="liveStatus">Connecting…</span>
     </div>
+    <span class="head-dot" id="headDot" aria-hidden="true"></span>
     <div class="live-clock" id="liveClock" aria-label="Live date and time">
       <div class="time" id="liveClockTime">--:--:--</div>
       <div class="date" id="liveClockDate">Loading date…</div>
@@ -1340,7 +1706,8 @@
         <h3 id="threatModalTitle">High threat detected</h3>
         <div class="score" id="threatModalScore">93%</div>
         <div class="meta" id="threatModalMeta">Source <strong>—</strong><br>Predicted threat <strong>—</strong><br>Model
-          <strong>—</strong></div>
+          <strong>—</strong>
+        </div>
         <div class="actions"><button class="ignore" id="threatModalIgnore" type="button">Ignore</button><button
             class="block" id="threatModalBlock" type="button">Block IP</button></div>
       </div>
@@ -1364,18 +1731,24 @@
             <button class="tab" id="tabAnalysis" type="button" role="tab" aria-selected="false"
               aria-controls="paneAnalysis" data-tab="analysis">✦ Analysis</button>
           </div>
-          <span class="count" id="logHeaderId">All flows</span>
+          <div class="head-right">
+            <span class="gemini-status" id="geminiStatus" hidden>Gemini: checking</span>
+            <span class="count" id="logHeaderId">All flows</span>
+            <button class="focus-btn" id="focusToggle" type="button" aria-pressed="false"
+              title="Hide the summary cards to give logs and analysis more room">Focus</button>
+          </div>
         </div>
 
         <div class="tab-pane" id="paneLogs" role="tabpanel" aria-labelledby="tabLogs">
-          <div class="source-detail" id="sourceDetail" hidden></div>
-          <div id="logBody">
-            <div class="empty">No logged flows yet. Press Start to begin live monitoring.</div>
+          <div class="log-scroll" id="logScroll">
+            <div class="source-detail" id="sourceDetail" hidden></div>
+            <div id="logBody">
+              <div class="empty">No logged flows yet. Press Start to begin live monitoring.</div>
+            </div>
           </div>
         </div>
 
         <div class="tab-pane" id="paneAnalysis" role="tabpanel" aria-labelledby="tabAnalysis" hidden>
-          <div class="gemini-bar"><span class="gemini-status" id="geminiStatus">Gemini: checking</span></div>
           <div class="chat-log" id="chatLog">
             <div class="chat-row bot">
               <div class="bubble">Select a flagged source to see what Gemini thinks about it.</div>
@@ -1396,6 +1769,33 @@
       </section>
     </div>
   </div>
+
+  <!-- bottom nav: mobile only -->
+  <nav class="mobile-nav" id="mobileNav" aria-label="Views">
+    <button type="button" class="mnav-btn" data-view="sources" aria-selected="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round">
+        <path d="M12 3L4 6.5V12c0 4.5 3.2 8 8 9 4.8-1 8-4.5 8-9V6.5L12 3z" />
+        <path d="M12 9v4M12 16.5v.01" />
+      </svg>
+      <span>Sources</span><b class="mnav-badge" id="navSourcesCount" hidden>0</b>
+    </button>
+    <button type="button" class="mnav-btn" data-view="logs" aria-selected="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round">
+        <path d="M4 6h16M4 12h16M4 18h10" />
+      </svg>
+      <span>Logs</span>
+    </button>
+    <button type="button" class="mnav-btn" data-view="analysis" aria-selected="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round">
+        <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" />
+        <path d="M19 16v4M17 18h4" />
+      </svg>
+      <span>Analysis</span>
+    </button>
+  </nav>
 
   <script>
     /* ============================================================
@@ -1456,6 +1856,9 @@
       document.getElementById('paneAnalysis').hidden = !analysis;
       document.getElementById('tabLogs').setAttribute('aria-selected', String(!analysis));
       document.getElementById('tabAnalysis').setAttribute('aria-selected', String(analysis));
+      // Gemini status lives in the panel header and is only relevant on the Analysis tab.
+      const gs = document.getElementById('geminiStatus');
+      if (gs) gs.hidden = !analysis;
       if (analysis) {
         // Rows added while the pane was hidden have no layout yet, so jump to the latest message now.
         const log = document.getElementById('chatLog');
@@ -1466,6 +1869,37 @@
       tab.addEventListener('click', () => setTab(tab.dataset.tab));
     });
     setTab('logs');
+
+    /* --- focus mode: hide the summary cards so Logs / Analysis get the full height --- */
+    (function () {
+      const btn = document.getElementById('focusToggle');
+      function apply(on) {
+        document.body.classList.toggle('focus', on);
+        btn.setAttribute('aria-pressed', String(on));
+        btn.textContent = on ? 'Show cards' : 'Focus';
+        try { localStorage.setItem('shakalaka-focus', on ? '1' : '0'); } catch (e) { }
+      }
+      btn.addEventListener('click', () => apply(!document.body.classList.contains('focus')));
+      let saved = false;
+      try { saved = localStorage.getItem('shakalaka-focus') === '1'; } catch (e) { }
+      if (saved) apply(true);
+    })();
+
+    /* --- mobile views: bottom nav shows Sources, Logs or Analysis one at a time.
+           On desktop the nav is hidden and all of this is inert. --- */
+    const mobileMq = window.matchMedia('(max-width:1000px)');
+    function isMobile() { return mobileMq.matches; }
+    function setMobileView(view) {
+      document.body.dataset.mview = view;
+      document.querySelectorAll('.mnav-btn').forEach(b => {
+        b.setAttribute('aria-selected', String(b.dataset.view === view));
+      });
+      if (view === 'logs') setTab('logs');
+      if (view === 'analysis') setTab('analysis');
+    }
+    document.querySelectorAll('.mnav-btn').forEach(b => {
+      b.addEventListener('click', () => setMobileView(b.dataset.view));
+    });
 
     /* --- nav: single Start/Stop toggle --- */
     let liveRunning = false;
@@ -1488,6 +1922,13 @@
       st.title = tip || '';
       st.classList.toggle('on', state === 'on');
       st.classList.toggle('offline', state === 'error');
+      // mirror the state in the header dot so it is visible without opening the menu
+      const dot = document.getElementById('headDot');
+      if (dot) {
+        dot.classList.toggle('on', state === 'on');
+        dot.classList.toggle('offline', state === 'error');
+        dot.title = text + (tip ? ' — ' + tip : '');
+      }
     }
 
     function rememberFlaggedSources(flaggedGroups) {
@@ -1567,6 +2008,8 @@
     async function focusThreatSource() {
       const ip = topRecent && topRecent.src_ip;
       if (!ip) return;
+      // On mobile, jump to the Sources view so the highlighted row is actually visible.
+      if (isMobile()) setMobileView('sources');
       await selectGroup(ip);
       const row = document.querySelector('.source-row[data-id="' + CSS.escape(ip) + '"]');
       if (row) {
@@ -2009,17 +2452,20 @@
 
         const tr = s.top_recent || null;
         topRecent = tr;
+        // label = full text (desktop), short = compact text (phones)
         const strip = [
-          { icon: '◈', label: 'Flows analyzed', value: total.toLocaleString(), sub: s.flows_analyzed_window || 'Live flow count', cls: '' },
-          { icon: '⚑', label: 'Flagged flows', value: s.flagged || 0, sub: (s.flagged_sources || 0) + ' sources, ' + flagPct + '% of all flows', cls: 'flag' },
-          { icon: '◎', label: 'Highest threat score · last 20 flows', value: (tr ? Number(tr.score) : 0).toFixed(0) + '%', sub: tr ? (tr.label + ' · ' + tr.src_ip + ' · active ' + tr.duration) : 'No threat in the last 20 flows', cls: ((tr && Number(tr.score) >= 70) ? 'flag ' : '') + 'threat-stat' }
+          { icon: '◈', label: 'Flows analyzed', short: 'Flows', value: total.toLocaleString(), sub: s.flows_analyzed_window || 'Live flow count', cls: '' },
+          { icon: '⚑', label: 'Flagged flows', short: 'Flagged', value: s.flagged || 0, sub: (s.flagged_sources || 0) + ' sources, ' + flagPct + '% of all flows', cls: 'flag' },
+          { icon: '◎', label: 'Highest threat score · last 20 flows', short: 'Top threat', value: (tr ? Number(tr.score) : 0).toFixed(0) + '%', sub: tr ? (tr.label + ' · ' + tr.src_ip + ' · active ' + tr.duration) : 'No threat in the last 20 flows', cls: ((tr && Number(tr.score) >= 70) ? 'flag ' : '') + 'threat-stat' }
         ];
         document.getElementById('statStrip').innerHTML = strip.map(item => `
-      <div class="stat ${item.cls}" ${item.cls.includes('threat-stat') ? 'role="button" tabindex="0"' : ''}>
+      <div class="stat ${item.cls}" ${item.cls.includes('threat-stat') ? 'role="button" tabindex="0"' : ''} title="${escapeHtml(item.sub)}">
         <div class="stat-icon">${item.icon}</div>
-        <div class="label">${escapeHtml(item.label)}</div>
-        <div class="value">${escapeHtml(item.value)}</div>
-        <div class="sub">${escapeHtml(item.sub)}</div>
+        <div class="label"><span class="lf">${escapeHtml(item.label)}</span><span class="ls">${escapeHtml(item.short)}</span></div>
+        <div class="vs">
+          <div class="value">${escapeHtml(item.value)}</div>
+          <div class="sub">${escapeHtml(item.sub)}</div>
+        </div>
       </div>`).join('');
         updateResponsePanel();
       } catch (e) { console.error('[Dashboard] Failed to load stats:', e); }
@@ -2052,6 +2498,12 @@
     function renderGroups() {
       const flaggedGroups = groups.filter(g => Number(g.threat_score || 0) > 0);
       document.getElementById('sourceCount').textContent = flaggedGroups.length + (flaggedGroups.length === 1 ? ' source' : ' sources');
+      // count badge on the bottom-nav Sources button
+      const navBadge = document.getElementById('navSourcesCount');
+      if (navBadge) {
+        navBadge.hidden = flaggedGroups.length === 0;
+        navBadge.textContent = flaggedGroups.length > 99 ? '99+' : String(flaggedGroups.length);
+      }
       const list = document.getElementById('sourceList');
       if (flaggedGroups.length === 0) {
         list.innerHTML = groupsError
@@ -2077,7 +2529,11 @@
     </div>`;
       }).join('');
       list.querySelectorAll('.source-row').forEach(row => {
-        row.addEventListener('click', () => selectGroup(row.dataset.id));
+        row.addEventListener('click', () => {
+          selectGroup(row.dataset.id);
+          // On mobile, tapping a source opens its logs.
+          if (isMobile()) setMobileView('logs');
+        });
       });
       if (!selectedGroup && flaggedGroups.length) {
         selectGroup(flaggedGroups[0].group_id);
@@ -2130,7 +2586,7 @@
       input.placeholder = `Ask a follow-up about ${id}…`;
     }
 
-    /* --- Logs tab (top): short summary of the selected source --- */
+    /* --- Logs tab (top of the scroll area): short summary of the selected source --- */
     function renderSourceDetail(id, analysis, logs) {
       const detail = document.getElementById('sourceDetail');
       if (!analysis || analysis.error) { detail.innerHTML = '<div class="empty">Unable to load source analysis.</div>'; return; }
@@ -2153,7 +2609,7 @@
     </div>`;
     }
 
-    /* --- Logs tab (bottom): all logs of the selected source --- */
+    /* --- Logs tab (below the summary): all logs of the selected source --- */
     function renderLogs(logs, emptyMessage = 'No logged flows for this source.') {
       const body = document.getElementById('logBody');
       if (!logs.length) { body.innerHTML = `<div class="empty">${escapeHtml(emptyMessage)}</div>`; return; }
